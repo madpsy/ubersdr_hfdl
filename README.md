@@ -20,7 +20,7 @@ docker run -d --name ubersdr_hfdl --rm \
   madpsy/ubersdr_hfdl:latest
 ```
 
-Once running, open **http://localhost:6090** in a browser to view the live
+Once running, open **http://ubersdr.local:6090** in a browser to view the live
 statistics dashboard.
 
 > **Note:** The container connects to UberSDR at `http://172.20.0.1:8080` by
