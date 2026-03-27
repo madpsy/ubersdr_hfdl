@@ -1,0 +1,905 @@
+/* -----------------------------------------------------------------------
+   HFDL Launcher — Statistics Dashboard
+   ----------------------------------------------------------------------- */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --border:    #30363d;
+  --text:      #c9d1d9;
+  --muted:     #8b949e;
+  --accent:    #58a6ff;
+  --green:     #3fb950;
+  --red:       #f85149;
+  --yellow:    #d29922;
+  --row-hover: #1f2937;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --header-h:  52px;
+  --tabbar-h:  40px;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Header ---- */
+
+header {
+  height: var(--header-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  z-index: 20;
+}
+
+header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+
+#status-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.indicator.connected    { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.indicator.disconnected { background: var(--red); }
+.indicator.connecting   { background: var(--yellow); }
+
+/* ---- Tab bar ---- */
+
+#tab-bar {
+  height: var(--tabbar-h);
+  display: flex;
+  align-items: stretch;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  padding: 0 12px;
+  gap: 4px;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 0 14px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+}
+
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ---- Tab panels ---- */
+
+main {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.tab-panel {
+  display: none;
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+/* Map panel — no scroll, Leaflet fills it */
+#tab-map {
+  overflow: hidden;
+}
+
+/* Stats and feed panels — scrollable with padding */
+#tab-stats,
+#tab-feed {
+  padding: 16px 20px;
+}
+
+/* ---- Map ---- */
+
+#map {
+  width: 100%;
+  height: 100%;
+}
+
+/* Aircraft marker */
+.ac-marker {
+  font-size: 28px;
+  line-height: 1;
+  text-shadow: 0 0 6px rgba(0,0,0,0.9);
+  color: var(--accent);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Permanent label shown below the aircraft icon */
+.ac-label {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: #fff;
+  background: rgba(0,0,0,0.65);
+  border-radius: 3px;
+  padding: 1px 4px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Leaflet popup override for dark theme */
+.leaflet-popup-content-wrapper {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+.leaflet-popup-tip {
+  background: var(--surface);
+}
+
+.leaflet-popup-close-button {
+  color: var(--muted) !important;
+}
+
+.ac-popup {
+  font-size: 13px;
+  line-height: 1.6;
+  min-width: 160px;
+}
+
+.ac-popup strong {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.ac-popup code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--green);
+}
+
+/* ---- Tables ---- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+thead th {
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+tbody tr:last-child {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background: var(--row-hover);
+}
+
+tbody td {
+  padding: 7px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+td.empty {
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+  padding: 20px;
+}
+
+/* ---- Ground stations tab ---- */
+
+#tab-gs {
+  padding: 16px 20px;
+}
+
+#gs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.gs-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.gs-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.gs-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.gs-location {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gs-freqs {
+  padding: 8px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.gs-freq {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  border-radius: 3px;
+  padding: 1px 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gs-freq--heard {
+  background: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+  border-color: rgba(63, 185, 80, 0.45);
+}
+
+.gs-slot {
+  font-size: 10px;
+  background: rgba(163, 113, 247, 0.18);
+  color: #a371f7;
+  border: 1px solid rgba(163, 113, 247, 0.3);
+  border-radius: 2px;
+  padding: 0 3px;
+  line-height: 1.4;
+}
+
+.gs-card--heard {
+  border-color: rgba(63, 185, 80, 0.5);
+  background: linear-gradient(135deg, rgba(63, 185, 80, 0.06) 0%, var(--surface) 60%);
+}
+
+.gs-heard {
+  font-size: 11px;
+  color: #3fb950;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.gs-no-freqs {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Frequency table — per-GS stat rows */
+.freq-cell {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: nowrap;
+  vertical-align: top;
+  padding-top: 10px;
+}
+
+.gs-stat-cell {
+  padding: 4px 8px;
+}
+
+.gs-stat-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 12px;
+}
+
+.gs-stat-row:last-child {
+  border-bottom: none;
+}
+
+.gs-stat-name {
+  color: var(--text);
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-stat-msgs {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gs-stat-sig {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gs-stat-time {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ---- Frequency table ---- */
+
+#freq-table td:nth-child(1) {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+#freq-table td:nth-child(2) {
+  font-family: var(--font-mono);
+}
+
+.sig-good   { color: var(--green); }
+.sig-ok     { color: var(--yellow); }
+.sig-weak   { color: var(--red); }
+
+/* ---- Planes table ---- */
+
+#planes-table {
+  font-size: 12px;
+  width: 100%;
+}
+
+#planes-table thead th {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+#planes-table td.mono {
+  font-family: var(--font-mono);
+}
+
+#planes-table td.dim {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ---- Live feed table ---- */
+
+#feed-table {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+#feed-table thead th {
+  font-size: 11px;
+}
+
+#feed-table td {
+  padding: 5px 10px;
+}
+
+.feed-new {
+  animation: flash 0.6s ease-out;
+}
+
+@keyframes flash {
+  from { background: rgba(88, 166, 255, 0.18); }
+  to   { background: transparent; }
+}
+
+.slot-s { color: var(--accent); }
+.slot-d { color: var(--green); }
+
+/* ---- Ground station map markers ---- */
+
+.gs-marker {
+  position: relative;
+  text-align: center;
+  line-height: 1;
+  filter: drop-shadow(0 0 3px rgba(0,0,0,0.7));
+}
+
+.gs-marker__label {
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text);
+  background: rgba(13, 17, 23, 0.75);
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ---- Map history panel ---- */
+
+.map-history {
+  background: rgba(13, 17, 23, 0.88);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 180px;
+  max-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: var(--text);
+  pointer-events: auto;
+}
+
+.map-history__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.map-history__empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.map-history__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.map-history__row--clickable {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 2px 3px;
+  margin: 0 -3px;
+  transition: background 0.15s;
+}
+
+.map-history__row--clickable:hover {
+  background: rgba(88, 166, 255, 0.12);
+}
+
+.map-history__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.map-history__ac {
+  flex: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-history__pos-count {
+  color: #7ecfff;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+
+.map-history__age {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ---- Map legend ---- */
+
+.map-legend {
+  background: rgba(13, 17, 23, 0.88);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 140px;
+  max-width: 220px;
+  font-size: 12px;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.map-legend__empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.map-legend__row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 0;
+}
+
+.map-legend__row--clickable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  transition: background 0.15s;
+}
+
+.map-legend__row--clickable:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.map-legend__row--selected {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.map-legend__swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.map-legend__label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Aircraft map markers ---- */
+
+.ac-marker {
+  color: var(--accent);
+  text-shadow: 0 0 4px rgba(0,0,0,0.8);
+  transition: opacity 0.2s;
+}
+
+.ac-marker--dim {
+  opacity: 0.25;
+}
+
+.ac-marker--selected {
+  color: #ffa657;
+  filter: drop-shadow(0 0 6px rgba(255, 166, 87, 0.7));
+}
+
+.ac-marker--pulse {
+  animation: ac-pulse 0.6s ease-out forwards;
+}
+
+@keyframes ac-pulse {
+  0%   { transform: scale(1);    filter: drop-shadow(0 0 0px rgba(88, 166, 255, 0)); }
+  30%  { transform: scale(1.55); filter: drop-shadow(0 0 8px rgba(88, 166, 255, 0.9)); }
+  100% { transform: scale(1);    filter: drop-shadow(0 0 0px rgba(88, 166, 255, 0)); }
+}
+
+.ac-label {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text);
+  background: rgba(13, 17, 23, 0.75);
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Hide plane labels when toggled off */
+.hide-ac-labels .ac-label {
+  display: none;
+}
+
+/* ---- Map stats counter (bottom-left) ---- */
+
+.map-stats-ctrl {
+  background: rgba(22, 27, 34, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
+}
+
+.map-stats-ctrl__item strong {
+  color: var(--accent);
+}
+
+.map-stats-ctrl__sep {
+  color: var(--muted);
+}
+
+/* ---- Map layer toggle control ---- */
+
+.map-layer-ctrl {
+  background: rgba(22, 27, 34, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 148px;
+  backdrop-filter: blur(4px);
+}
+
+.map-layer-ctrl__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+
+.map-layer-ctrl__row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.map-layer-ctrl__row input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.type-spdu  { color: var(--muted); }
+.type-lpdu  { color: var(--text); }
+
+/* ---- Instances tab ---- */
+
+#instances-content {
+  padding: 20px;
+  max-width: 1100px;
+}
+
+.instances-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+  margin-top: 20px;
+}
+
+.instances-section-title:first-child {
+  margin-top: 0;
+}
+
+.instances-args-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.instances-args-box--empty {
+  color: var(--muted);
+  font-style: italic;
+  font-family: inherit;
+}
+
+.instances-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.instances-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.instances-card__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+
+.instances-card__centre {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.instances-card__mode {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.instances-card__freqs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.instances-freq {
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+/* ---- Signal history tab ---- */
+
+#signal-charts {
+  padding: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+  gap: 20px;
+}
+
+.sig-chart-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.sig-chart-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.sig-chart-card__subtitle {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.sig-chart-card canvas {
+  width: 100% !important;
+  height: 180px !important;
+}
+
+#signal-empty {
+  padding: 40px 20px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* ---- Responsive ---- */
+
+@media (max-width: 900px) {
+  header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    height: auto;
+    padding: 8px 12px;
+  }
+
+  #status-bar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  #feed-table th:nth-child(n+6),
+  #feed-table td:nth-child(n+6) {
+    display: none;
+  }
+}

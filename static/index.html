@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UberSDR HFDL — Statistics</title>
+
+  <!-- Leaflet CSS (CDN) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>UberSDR HFDL</h1>
+    <div id="status-bar">
+      <span id="uptime-label">Uptime: —</span>
+      <span id="total-label">Total messages: —</span>
+      <span id="aircraft-label">Aircraft: —</span>
+      <span id="conn-indicator" class="indicator disconnected" title="Live feed status"></span>
+    </div>
+  </header>
+
+  <!-- Tab bar -->
+  <nav id="tab-bar">
+    <button class="tab-btn active" data-tab="map">🗺 Map</button>
+    <button class="tab-btn" data-tab="stats">📊 Frequencies</button>
+    <button class="tab-btn" data-tab="feed">📡 Live Feed</button>
+    <button class="tab-btn" data-tab="gs">📻 Ground Stations</button>
+    <button class="tab-btn" data-tab="planes">✈ Planes</button>
+    <button class="tab-btn" data-tab="instances">⚙ Instances</button>
+    <button class="tab-btn" data-tab="signal">📈 Signal</button>
+  </nav>
+
+  <main>
+
+    <!-- Map tab -->
+    <section id="tab-map" class="tab-panel active">
+      <div id="map"></div>
+    </section>
+
+    <!-- Frequency stats tab -->
+    <section id="tab-stats" class="tab-panel">
+      <table id="freq-table">
+        <thead>
+          <tr>
+            <th>Frequency (kHz)</th>
+            <th>Heard Ground Stations</th>
+          </tr>
+        </thead>
+        <tbody id="freq-tbody">
+          <tr><td colspan="2" class="empty">Waiting for data…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Live feed tab -->
+    <section id="tab-feed" class="tab-panel">
+      <table id="feed-table">
+        <thead>
+          <tr>
+            <th>Time (UTC)</th>
+            <th>Freq (kHz)</th>
+            <th>Slot</th>
+            <th>bps</th>
+            <th>Signal</th>
+            <th>Src</th>
+            <th>Dst</th>
+            <th>Type</th>
+            <th>Reg / Flight</th>
+          </tr>
+        </thead>
+        <tbody id="feed-tbody">
+          <tr><td colspan="9" class="empty">Waiting for messages…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Ground stations tab -->
+    <section id="tab-gs" class="tab-panel">
+      <div id="gs-grid"></div>
+    </section>
+
+    <!-- Planes tab -->
+    <section id="tab-planes" class="tab-panel">
+      <table id="planes-table">
+        <thead>
+          <tr>
+            <th>ICAO</th>
+            <th>Reg</th>
+            <th>Flight</th>
+            <th>Lat</th>
+            <th>Lon</th>
+            <th>Freq (kHz)</th>
+            <th>Ground Station</th>
+            <th>Signal</th>
+            <th>Messages</th>
+            <th>Last Seen</th>
+          </tr>
+        </thead>
+        <tbody id="planes-tbody">
+          <tr><td colspan="10" class="empty">No aircraft seen yet…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Instances tab -->
+    <section id="tab-instances" class="tab-panel">
+      <div id="instances-content">
+        <div class="instances-extra-args" id="instances-extra-args"></div>
+        <div id="instances-windows"></div>
+      </div>
+    </section>
+
+    <!-- Signal history tab -->
+    <section id="tab-signal" class="tab-panel">
+      <div id="signal-charts"></div>
+    </section>
+
+  </main>
+
+  <!-- Leaflet JS (CDN) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <!-- Chart.js (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <script src="app.js"></script>
+  <script src="map.js"></script>
+</body>
+</html>
