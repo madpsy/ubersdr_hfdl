@@ -3,6 +3,32 @@
 Tools for receiving HFDL using an [UberSDR](https://ubersdr.org) instance as the
 radio back-end and [dumphfdl](https://github.com/szpajder/dumphfdl) as the decoder.
 
+---
+
+## Quick Start — Prebuilt Docker Image
+
+> **Most users should start here.**  A prebuilt image is published on Docker Hub
+> at [`madpsy/ubersdr_hfdl`](https://hub.docker.com/r/madpsy/ubersdr_hfdl) — no
+> build step required.
+>
+> **Run this command on the same machine as your UberSDR installation:**
+
+```bash
+docker run -d --name ubersdr_hfdl --rm \
+  -e EXTRA_ARGS="--output decoded:basestation:tcp:address=adsb.oarc.uk,port=32010" \
+  -p 6090:6090 \
+  madpsy/ubersdr_hfdl:latest
+```
+
+Once running, open **http://localhost:6090** in a browser to view the live
+statistics dashboard.
+
+> **Note:** The container connects to UberSDR at `http://172.20.0.1:8080` by
+> default.  If your UberSDR instance is on a different address, add
+> `-e UBERSDR_URL=http://<host>:<port>` to the command above.
+
+---
+
 ## Overview
 
 ```
