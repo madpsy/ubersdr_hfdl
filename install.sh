@@ -84,21 +84,32 @@ fi
 # runs as a system UID that differs from the host user who downloaded the file).
 chmod 666 "${FREQ_FILE}"
 
+IQ_RECORDINGS_DIR="iq_recordings"
+IQ_CONTAINER_PATH="/iq_recordings"
+
 # ---------------------------------------------------------------------------
-# Patch compose file: add bind mount and FREQ_URL if not already present
+# Patch compose file: add bind mounts and FREQ_URL if not already present
 # ---------------------------------------------------------------------------
 
 if ! grep -q "hfdl_frequencies.jsonl" "${COMPOSE_FILE}"; then
-    # Inject volume mount under the service (before the first 'environment:' line)
-    sed -i "s|    environment:|    volumes:\n      - ./${FREQ_FILE}:${CONTAINER_FREQ_PATH}\n    environment:|" "${COMPOSE_FILE}"
+    # Inject volumes block before the first 'environment:' line, including both
+    # the frequency file mount and the IQ recordings directory mount.
+    sed -i "s|    environment:|    volumes:\n      - ./${FREQ_FILE}:${CONTAINER_FREQ_PATH}\n      - ./${IQ_RECORDINGS_DIR}:${IQ_CONTAINER_PATH}\n    environment:|" "${COMPOSE_FILE}"
     # Set FREQ_URL env var (replace the commented-out placeholder if present, else append)
     if grep -q "# FREQ_URL:" "${COMPOSE_FILE}"; then
         sed -i "s|# FREQ_URL:.*|FREQ_URL: \"file://${CONTAINER_FREQ_PATH}\"|" "${COMPOSE_FILE}"
     else
         sed -i "s|      EXTRA_ARGS:|      FREQ_URL: \"file://${CONTAINER_FREQ_PATH}\"\n      EXTRA_ARGS:|" "${COMPOSE_FILE}"
     fi
-    echo "Patched ${COMPOSE_FILE} with frequency file mount and FREQ_URL"
+    echo "Patched ${COMPOSE_FILE} with frequency file mount, IQ recordings mount, and FREQ_URL"
 fi
+
+# ---------------------------------------------------------------------------
+# Create IQ recordings directory on the host
+# ---------------------------------------------------------------------------
+
+mkdir -p "${INSTALL_DIR}/${IQ_RECORDINGS_DIR}"
+echo "IQ recordings directory ready: ${INSTALL_DIR}/${IQ_RECORDINGS_DIR}"
 
 # ---------------------------------------------------------------------------
 # Pull image and start service
