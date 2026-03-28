@@ -192,13 +192,9 @@ function renderLegend() {
       } else {
         selectGS(gsId);
         renderLegend();
-        // Pan to the GS marker if it exists and trigger the same behaviour as
-        // clicking the marker directly
+        // Pan to the GS marker if it exists
         const marker = gsMarkers[gsId];
-        if (marker) {
-          hfdlMap.panTo(marker.getLatLng());
-          marker.fire('click');
-        }
+        if (marker) hfdlMap.panTo(marker.getLatLng());
       }
     });
   });

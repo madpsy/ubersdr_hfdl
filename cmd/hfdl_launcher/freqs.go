@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 )
@@ -130,10 +131,11 @@ func groupFrequencies(freqs []int) []freqGroup {
 
 // fetchResult holds the output of fetchFrequencies.
 type fetchResult struct {
-	Freqs    []int           // sorted unique frequencies in kHz
-	GSNames  map[int]string  // gs_id → location name (all stations)
-	FreqGSID map[int][]int   // freq_khz → sorted list of gs_ids that use it
-	Stations []groundStation // all ground stations sorted by gs_id
+	Freqs         []int           // sorted unique enabled frequencies in kHz
+	DisabledFreqs []int           // sorted unique disabled frequencies in kHz
+	GSNames       map[int]string  // gs_id → location name (all stations)
+	FreqGSID      map[int][]int   // freq_khz → sorted list of gs_ids that use it
+	Stations      []groundStation // all ground stations sorted by gs_id
 }
 
 // fetchFrequencies fetches the HFDL ground station JSONL and returns:
@@ -141,21 +143,33 @@ type fetchResult struct {
 //   - a map of all gs_id → location name (unfiltered)
 //   - a map of freq_khz → []gs_id for all stations (unfiltered)
 func fetchFrequencies(freqURL string, stationIDs map[int]bool) (fetchResult, error) {
-	resp, err := http.Get(freqURL) //nolint:noctx
-	if err != nil {
-		return fetchResult{}, fmt.Errorf("fetch %s: %w", freqURL, err)
-	}
-	defer resp.Body.Close()
+	var scanner *bufio.Scanner
 
-	if resp.StatusCode != http.StatusOK {
-		return fetchResult{}, fmt.Errorf("fetch %s: HTTP %d", freqURL, resp.StatusCode)
+	if strings.HasPrefix(freqURL, "file://") {
+		path := strings.TrimPrefix(freqURL, "file://")
+		f, err := os.Open(path)
+		if err != nil {
+			return fetchResult{}, fmt.Errorf("open %s: %w", path, err)
+		}
+		defer f.Close()
+		scanner = bufio.NewScanner(f)
+	} else {
+		resp, err := http.Get(freqURL) //nolint:noctx
+		if err != nil {
+			return fetchResult{}, fmt.Errorf("fetch %s: %w", freqURL, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fetchResult{}, fmt.Errorf("fetch %s: HTTP %d", freqURL, resp.StatusCode)
+		}
+		scanner = bufio.NewScanner(resp.Body)
 	}
 
 	seen := make(map[int]bool)
+	seenDisabled := make(map[int]bool)
 	gsNames := make(map[int]string)
 	freqGSID := make(map[int]map[int]bool) // freq_khz → set of gs_ids
 	var allStations []groundStation
-	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -172,6 +186,7 @@ func fetchFrequencies(freqURL string, stationIDs map[int]bool) (fetchResult, err
 		allStations = append(allStations, gs)
 		for _, f := range gs.Freqs {
 			if !f.Enabled {
+				seenDisabled[f.FreqKHz] = true
 				continue
 			}
 			if freqGSID[f.FreqKHz] == nil {
@@ -204,6 +219,15 @@ func fetchFrequencies(freqURL string, stationIDs map[int]bool) (fetchResult, err
 	}
 	sort.Ints(freqs)
 
+	// Collect disabled frequencies (exclude any that are also enabled somewhere)
+	disabledFreqs := make([]int, 0, len(seenDisabled))
+	for f := range seenDisabled {
+		if !seen[f] {
+			disabledFreqs = append(disabledFreqs, f)
+		}
+	}
+	sort.Ints(disabledFreqs)
+
 	// Convert freq→gs set to sorted slices
 	freqGSIDSlice := make(map[int][]int, len(freqGSID))
 	for fkhz, gsSet := range freqGSID {
@@ -215,5 +239,5 @@ func fetchFrequencies(freqURL string, stationIDs map[int]bool) (fetchResult, err
 		freqGSIDSlice[fkhz] = ids
 	}
 
-	return fetchResult{Freqs: freqs, GSNames: gsNames, FreqGSID: freqGSIDSlice, Stations: allStations}, nil
+	return fetchResult{Freqs: freqs, DisabledFreqs: disabledFreqs, GSNames: gsNames, FreqGSID: freqGSIDSlice, Stations: allStations}, nil
 }

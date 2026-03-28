@@ -15,8 +15,11 @@
 set -euo pipefail
 
 REPO_RAW="https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/refs/heads/main"
+FREQ_JSONL_URL="https://ubersdr.org/hfdl/hfdl_frequencies.jsonl"
 INSTALL_DIR="${HOME}/ubersdr/hfdl"
 COMPOSE_FILE="docker-compose.yml"
+FREQ_FILE="hfdl_frequencies.jsonl"
+CONTAINER_FREQ_PATH="/data/hfdl_frequencies.jsonl"
 FORCE_UPDATE="${FORCE_UPDATE:-0}"
 
 # Parse flags when run directly (not piped)
@@ -53,6 +56,30 @@ else
     echo "Fetching ${COMPOSE_FILE} from GitHub..."
     curl -fsSL "${REPO_RAW}/${COMPOSE_FILE}" -o "${COMPOSE_FILE}"
     echo "Saved ${COMPOSE_FILE}"
+fi
+
+# ---------------------------------------------------------------------------
+# Fetch HFDL frequency list
+# ---------------------------------------------------------------------------
+
+echo "Fetching HFDL frequency list..."
+curl -fsSL "${FREQ_JSONL_URL}" -o "${FREQ_FILE}"
+echo "Saved ${FREQ_FILE}"
+
+# ---------------------------------------------------------------------------
+# Patch compose file: add bind mount and FREQ_URL if not already present
+# ---------------------------------------------------------------------------
+
+if ! grep -q "hfdl_frequencies.jsonl" "${COMPOSE_FILE}"; then
+    # Inject volume mount under the service (before the first 'environment:' line)
+    sed -i "s|    environment:|    volumes:\n      - ./${FREQ_FILE}:${CONTAINER_FREQ_PATH}:ro\n    environment:|" "${COMPOSE_FILE}"
+    # Set FREQ_URL env var (replace the commented-out placeholder if present, else append)
+    if grep -q "# FREQ_URL:" "${COMPOSE_FILE}"; then
+        sed -i "s|# FREQ_URL:.*|FREQ_URL: \"file://${CONTAINER_FREQ_PATH}\"|" "${COMPOSE_FILE}"
+    else
+        sed -i "s|      EXTRA_ARGS:|      FREQ_URL: \"file://${CONTAINER_FREQ_PATH}\"\n      EXTRA_ARGS:|" "${COMPOSE_FILE}"
+    fi
+    echo "Patched ${COMPOSE_FILE} with frequency file mount and FREQ_URL"
 fi
 
 # ---------------------------------------------------------------------------

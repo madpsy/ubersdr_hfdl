@@ -357,6 +357,13 @@ td.empty {
   border-color: rgba(210, 153, 34, 0.45);
 }
 
+.gs-freq--disabled {
+  background: rgba(248, 81, 73, 0.1);
+  color: #f85149;
+  border-color: rgba(248, 81, 73, 0.3);
+  opacity: 0.7;
+}
+
 .gs-slot {
   font-size: 10px;
   background: rgba(163, 113, 247, 0.18);
@@ -891,6 +898,20 @@ td.empty {
   background: rgba(63, 185, 80, 0.15);
   border-color: rgba(63, 185, 80, 0.45);
   color: #3fb950;
+}
+
+.instances-freq--disabled {
+  background: rgba(248, 81, 73, 0.1);
+  border-color: rgba(248, 81, 73, 0.3);
+  color: #f85149;
+  opacity: 0.7;
+}
+
+.instances-disabled-freqs {
+  padding: 8px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 /* ---- Signal history tab ---- */

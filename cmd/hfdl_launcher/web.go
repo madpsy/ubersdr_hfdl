@@ -28,7 +28,7 @@ type instanceInfo struct {
 //	GET /events         — Server-Sent Events stream of typed events:
 //	                        {"type":"message","data":{...}}
 //	                        {"type":"position","data":{...}}
-func startWebServer(port int, staticDir string, store *statsStore, groups []freqGroup, extraArgs []string) {
+func startWebServer(port int, staticDir string, store *statsStore, groups []freqGroup, disabledFreqs []int, extraArgs []string, freqURL string) {
 	mux := http.NewServeMux()
 
 	// /stats — full JSON snapshot
@@ -89,8 +89,10 @@ func startWebServer(port int, staticDir string, store *statsStore, groups []freq
 			}
 		}
 		resp := map[string]interface{}{
-			"extra_args": extraArgs,
-			"windows":    windows,
+			"extra_args":     extraArgs,
+			"windows":        windows,
+			"disabled_freqs": disabledFreqs,
+			"freq_url":       freqURL,
 		}
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			log.Printf("web: /instances encode error: %v", err)

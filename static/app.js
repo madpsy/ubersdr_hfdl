@@ -405,16 +405,20 @@ function renderGroundStations(stations) {
   }
 
   container.innerHTML = stations.map(gs => {
-    const heardSet = heardFreqsByGS[gs.gs_id];
-    const dstSet   = dstFreqsByGS[gs.gs_id];
-    const freqs = (gs.frequencies || [])
-      .map(f => {
-        const isHeard = heardSet && heardSet.has(f.freq_khz);
-        const isDst   = dstSet   && dstSet.has(f.freq_khz);
-        const cls = isHeard ? ' gs-freq--heard' : isDst ? ' gs-freq--dst' : '';
-        return `<span class="gs-freq${cls}">${f.freq_khz.toLocaleString()}<span class="gs-slot">T${f.timeslot}</span></span>`;
-      })
-      .join('');
+     const heardSet = heardFreqsByGS[gs.gs_id];
+     const dstSet   = dstFreqsByGS[gs.gs_id];
+     const freqs = (gs.frequencies || [])
+       .map(f => {
+         const isDisabled = f.enabled === false;
+         const isHeard = !isDisabled && heardSet && heardSet.has(f.freq_khz);
+         const isDst   = !isDisabled && !isHeard && dstSet && dstSet.has(f.freq_khz);
+         const cls = isDisabled ? ' gs-freq--disabled'
+                   : isHeard   ? ' gs-freq--heard'
+                   : isDst     ? ' gs-freq--dst'
+                   : '';
+         return `<span class="gs-freq${cls}">${f.freq_khz.toLocaleString()}<span class="gs-slot">T${f.timeslot}</span></span>`;
+       })
+       .join('');
     const heard = gs.last_heard > 0;
     const heardBadge = heard
       ? `<span class="gs-heard" title="Last heard ${fmtDateTime(gs.last_heard)}">● heard ${fmtTime(gs.last_heard)}</span>`
@@ -467,17 +471,24 @@ function renderInstances(data) {
   const windowsEl = document.getElementById('instances-windows');
   if (!extraEl || !windowsEl) return;
 
+  // Frequency source URL
+  const freqURL = data.freq_url || '';
+  let extraHtml =
+    `<div class="instances-section-title">Frequency source</div>` +
+    `<div class="instances-args-box"><code>${esc(freqURL) || '<em>default</em>'}</code></div>`;
+
   // Extra args section
   const args = Array.isArray(data.extra_args) ? data.extra_args : [];
   if (args.length > 0) {
-    extraEl.innerHTML =
+    extraHtml +=
       `<div class="instances-section-title">Extra dumphfdl arguments</div>` +
       `<div class="instances-args-box"><code>${esc(args.join(' '))}</code></div>`;
   } else {
-    extraEl.innerHTML =
+    extraHtml +=
       `<div class="instances-section-title">Extra dumphfdl arguments</div>` +
       `<div class="instances-args-box instances-args-box--empty">None</div>`;
   }
+  extraEl.innerHTML = extraHtml;
 
   // Windows section
   const windows = Array.isArray(data.windows) ? data.windows : [];
@@ -503,6 +514,18 @@ function renderInstances(data) {
       `</div>`;
   }
   html += `</div>`;
+
+  // Disabled frequencies — shown as a flat list of red chips below the windows
+  const disabledFreqs = Array.isArray(data.disabled_freqs) ? data.disabled_freqs : [];
+  if (disabledFreqs.length > 0) {
+    html += `<div class="instances-section-title">Disabled Frequencies (${disabledFreqs.length})</div>`;
+    html += `<div class="instances-disabled-freqs">`;
+    html += disabledFreqs.map(f =>
+      `<span class="instances-freq instances-freq--disabled">${f.toLocaleString()}</span>`
+    ).join('');
+    html += `</div>`;
+  }
+
   windowsEl.innerHTML = html;
 }
 

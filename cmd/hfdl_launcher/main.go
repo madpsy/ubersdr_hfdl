@@ -129,7 +129,7 @@ func run(cfg config) error {
 
 	// Web server.
 	if cfg.webPort > 0 {
-		go startWebServer(cfg.webPort, cfg.webStaticDir, store, groups, cfg.extraHFDLArgs)
+		go startWebServer(cfg.webPort, cfg.webStaticDir, store, groups, fetched.DisabledFreqs, cfg.extraHFDLArgs, cfg.freqURL)
 	}
 
 	// Build and start instances.
