@@ -18,6 +18,7 @@
 //	  -freq-url     URL for HFDL frequency JSONL
 //	  -station      Comma-separated ground station IDs to monitor (default: all)
 //	  -system-table Path to dumphfdl system table file (optional)
+//	  -config-pass  Password required to use the Apply endpoints (optional)
 //	  -dry-run      Print planned instances without launching
 //	  -web-port     Port for the web statistics server (default: 8080, 0 = disabled)
 //	  -web-static   Path to static web files directory
@@ -39,32 +40,33 @@ import (
 )
 
 func printUsage(w io.Writer) {
-	fmt.Fprintf(w, "Usage: hfdl_launcher [flags] [-- dumphfdl-args...]\n\n")
-	fmt.Fprintf(w, "Flags:\n")
-	fmt.Fprintf(w, "  -url          UberSDR base URL (default: http://172.20.0.1:8080)\n")
-	fmt.Fprintf(w, "  -pass         Bypass password (optional)\n")
-	fmt.Fprintf(w, "  -ubersdr-iq   Path to ubersdr_iq binary (default: ubersdr_iq)\n")
-	fmt.Fprintf(w, "  -dumphfdl     Path to dumphfdl binary (default: dumphfdl)\n")
-	fmt.Fprintf(w, "  -freq-url     URL for HFDL frequency JSONL\n")
-	fmt.Fprintf(w, "                (default: https://ubersdr.org/hfdl/hfdl_frequencies.jsonl)\n")
-	fmt.Fprintf(w, "  -station      Comma-separated ground station IDs to monitor (default: all)\n")
-	fmt.Fprintf(w, "  -system-table Path to dumphfdl system table file (optional)\n")
-	fmt.Fprintf(w, "  -dry-run      Print planned instances without launching\n")
-	fmt.Fprintf(w, "  -web-port     Port for the web statistics server (default: 6090, 0 = disabled)\n")
-	fmt.Fprintf(w, "  -web-static   Path to static web files directory\n")
-	fmt.Fprintf(w, "                (default: /usr/local/share/hfdl_launcher/static)\n\n")
-	fmt.Fprintf(w, "Extra dumphfdl arguments:\n")
-	fmt.Fprintf(w, "  Any arguments after -- are passed verbatim to every dumphfdl instance.\n")
-	fmt.Fprintf(w, "  Note: --output decoded:json:file:path=- is always injected automatically.\n\n")
-	fmt.Fprintf(w, "Bandwidth selection:\n")
-	fmt.Fprintf(w, "  iq48  — 48 kHz  (channels clustered within 48 kHz)\n")
-	fmt.Fprintf(w, "  iq96  — 96 kHz  (channels spanning 48–96 kHz)\n")
-	fmt.Fprintf(w, "  iq192 — 192 kHz (channels spanning 96–192 kHz)\n")
-	fmt.Fprintf(w, "  Clusters wider than 192 kHz are split across multiple windows.\n\n")
-	fmt.Fprintf(w, "Examples:\n")
-	fmt.Fprintf(w, "  hfdl_launcher -url http://sdr.example.com:8080\n")
-	fmt.Fprintf(w, "  hfdl_launcher -url http://sdr.example.com:8080 -station 1,2,3\n")
-	fmt.Fprintf(w, "  hfdl_launcher -url http://sdr.example.com:8080 -- --output decoded:json:tcp:address=host,port=5555\n")
+	fmt.Fprintf(w, "Usage: hfdl_launcher [flags] [-- dumphfdl-args...]\n\n")                                                 //nolint:errcheck
+	fmt.Fprintf(w, "Flags:\n")                                                                                               //nolint:errcheck
+	fmt.Fprintf(w, "  -url          UberSDR base URL (default: http://172.20.0.1:8080)\n")                                   //nolint:errcheck
+	fmt.Fprintf(w, "  -pass         Bypass password (optional)\n")                                                           //nolint:errcheck
+	fmt.Fprintf(w, "  -ubersdr-iq   Path to ubersdr_iq binary (default: ubersdr_iq)\n")                                      //nolint:errcheck
+	fmt.Fprintf(w, "  -dumphfdl     Path to dumphfdl binary (default: dumphfdl)\n")                                          //nolint:errcheck
+	fmt.Fprintf(w, "  -freq-url     URL for HFDL frequency JSONL\n")                                                         //nolint:errcheck
+	fmt.Fprintf(w, "                (default: https://ubersdr.org/hfdl/hfdl_frequencies.jsonl)\n")                           //nolint:errcheck
+	fmt.Fprintf(w, "  -station      Comma-separated ground station IDs to monitor (default: all)\n")                         //nolint:errcheck
+	fmt.Fprintf(w, "  -system-table Path to dumphfdl system table file (optional)\n")                                        //nolint:errcheck
+	fmt.Fprintf(w, "  -config-pass  Password to protect the Apply frequency endpoints (optional)\n")                         //nolint:errcheck
+	fmt.Fprintf(w, "  -dry-run      Print planned instances without launching\n")                                            //nolint:errcheck
+	fmt.Fprintf(w, "  -web-port     Port for the web statistics server (default: 6090, 0 = disabled)\n")                     //nolint:errcheck
+	fmt.Fprintf(w, "  -web-static   Path to static web files directory\n")                                                   //nolint:errcheck
+	fmt.Fprintf(w, "                (default: /usr/local/share/hfdl_launcher/static)\n\n")                                   //nolint:errcheck
+	fmt.Fprintf(w, "Extra dumphfdl arguments:\n")                                                                            //nolint:errcheck
+	fmt.Fprintf(w, "  Any arguments after -- are passed verbatim to every dumphfdl instance.\n")                             //nolint:errcheck
+	fmt.Fprintf(w, "  Note: --output decoded:json:file:path=- is always injected automatically.\n\n")                        //nolint:errcheck
+	fmt.Fprintf(w, "Bandwidth selection:\n")                                                                                 //nolint:errcheck
+	fmt.Fprintf(w, "  iq48  — 48 kHz  (channels clustered within 48 kHz)\n")                                                 //nolint:errcheck
+	fmt.Fprintf(w, "  iq96  — 96 kHz  (channels spanning 48–96 kHz)\n")                                                      //nolint:errcheck
+	fmt.Fprintf(w, "  iq192 — 192 kHz (channels spanning 96–192 kHz)\n")                                                     //nolint:errcheck
+	fmt.Fprintf(w, "  Clusters wider than 192 kHz are split across multiple windows.\n\n")                                   //nolint:errcheck
+	fmt.Fprintf(w, "Examples:\n")                                                                                            //nolint:errcheck
+	fmt.Fprintf(w, "  hfdl_launcher -url http://sdr.example.com:8080\n")                                                     //nolint:errcheck
+	fmt.Fprintf(w, "  hfdl_launcher -url http://sdr.example.com:8080 -station 1,2,3\n")                                      //nolint:errcheck
+	fmt.Fprintf(w, "  hfdl_launcher -url http://sdr.example.com:8080 -- --output decoded:json:tcp:address=host,port=5555\n") //nolint:errcheck
 }
 
 func run(cfg config) error {
@@ -127,9 +129,13 @@ func run(cfg config) error {
 	}()
 	go store.purgeStaleAircraft()
 
+	// exitCh: Apply endpoints send on this to trigger a clean exit so Docker
+	// restarts the container and re-reads the updated frequency file.
+	exitCh := make(chan struct{}, 1)
+
 	// Web server.
 	if cfg.webPort > 0 {
-		go startWebServer(cfg.webPort, cfg.webStaticDir, store, groups, fetched.DisabledFreqs, cfg.extraHFDLArgs, cfg.freqURL)
+		go startWebServer(cfg.webPort, cfg.webStaticDir, store, groups, fetched.DisabledFreqs, cfg.extraHFDLArgs, cfg.freqURL, cfg.configPass, exitCh)
 	}
 
 	// Build and start instances.
@@ -159,8 +165,13 @@ func run(cfg config) error {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	log.Printf("all instances started — press Ctrl+C to stop")
 
-	<-sigs
-	log.Printf("shutting down all instances…")
+	select {
+	case <-sigs:
+		log.Printf("shutting down all instances…")
+	case <-exitCh:
+		log.Printf("frequency config updated — exiting for restart…")
+	}
+
 	for _, inst := range instances {
 		inst.stop()
 	}
@@ -176,6 +187,7 @@ type config struct {
 	dumphfdlPath  string
 	freqURL       string
 	systemTable   string
+	configPass    string
 	stationIDs    map[int]bool
 	extraHFDLArgs []string
 	dryRun        bool
@@ -192,6 +204,7 @@ func main() {
 		freqURL      = flag.String("freq-url", "https://ubersdr.org/hfdl/hfdl_frequencies.jsonl", "HFDL frequency list URL")
 		stationFlag  = flag.String("station", "", "Comma-separated ground station IDs (default: all)")
 		systemTable  = flag.String("system-table", "", "Path to dumphfdl system table file")
+		configPass   = flag.String("config-pass", "", "Password to protect the Apply frequency endpoints")
 		dryRun       = flag.Bool("dry-run", false, "Print planned instances without launching")
 		webPort      = flag.Int("web-port", 6090, "Port for the web statistics server (0 = disabled)")
 		webStatic    = flag.String("web-static", "/usr/local/share/hfdl_launcher/static", "Path to static web files directory")
@@ -208,7 +221,7 @@ func main() {
 			}
 			id, err := strconv.Atoi(part)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: invalid station ID %q in -station flag\n", part)
+				fmt.Fprintf(os.Stderr, "error: invalid station ID %q in -station flag\n", part) //nolint:errcheck
 				os.Exit(1)
 			}
 			stationIDs[id] = true
@@ -222,6 +235,7 @@ func main() {
 		dumphfdlPath:  *dumphfdlPath,
 		freqURL:       *freqURL,
 		systemTable:   *systemTable,
+		configPass:    *configPass,
 		stationIDs:    stationIDs,
 		extraHFDLArgs: flag.Args(),
 		dryRun:        *dryRun,

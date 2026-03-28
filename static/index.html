@@ -139,10 +139,42 @@
             <p class="toolbar-desc">Downloads the latest <code>hfdl_frequencies.jsonl</code> directly from ubersdr.org, as-is with no modifications.</p>
           </div>
         </div>
+        <!-- Apply toolbar — only rendered by JS when apply_enabled is true -->
+        <div id="instances-apply-toolbar" style="display:none">
+          <div class="toolbar-section-label">Apply to running config (requires password — restarts service)</div>
+          <div id="instances-apply-buttons" class="instances-toolbar">
+            <div class="toolbar-item">
+              <button id="btn-apply-freqs" class="toolbar-btn toolbar-btn--apply">↺ Apply Active Frequencies</button>
+              <p class="toolbar-desc">Overwrites the frequency file with only active frequencies, then restarts.</p>
+            </div>
+            <div class="toolbar-item">
+              <button id="btn-apply-all-freqs" class="toolbar-btn toolbar-btn--apply">↺ Apply All Frequencies</button>
+              <p class="toolbar-desc">Overwrites the frequency file with all frequencies enabled, then restarts.</p>
+            </div>
+            <div class="toolbar-item">
+              <button id="btn-apply-latest-freqs" class="toolbar-btn toolbar-btn--apply">↺ Apply Latest Frequencies</button>
+              <p class="toolbar-desc">Fetches the latest frequency list from ubersdr.org, overwrites the file, then restarts.</p>
+            </div>
+          </div>
+        </div>
         <div class="instances-extra-args" id="instances-extra-args"></div>
         <div id="instances-windows"></div>
       </div>
     </section>
+
+    <!-- Apply password modal -->
+    <div id="apply-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h2 class="modal-title" id="modal-title"></h2>
+        <p class="modal-desc" id="modal-desc"></p>
+        <input type="password" id="modal-pass" class="modal-input" placeholder="Password" autocomplete="current-password" />
+        <p class="modal-error" id="modal-error" hidden></p>
+        <div class="modal-buttons">
+          <button id="modal-confirm" class="modal-btn modal-btn--confirm">Confirm</button>
+          <button id="modal-cancel" class="modal-btn modal-btn--cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Signal history tab -->
     <section id="tab-signal" class="tab-panel">

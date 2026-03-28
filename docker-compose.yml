@@ -13,5 +13,6 @@ services:
       # STATION: "1,2,3"
       # SYSTEM_TABLE: ""
       # FREQ_URL: ""
+      # CONFIG_PASS: ""
       # SILENT: "0"
       # DRY_RUN: "0"

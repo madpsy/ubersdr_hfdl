@@ -471,6 +471,12 @@ function renderInstances(data) {
   const windowsEl = document.getElementById('instances-windows');
   if (!extraEl || !windowsEl) return;
 
+  // Show/hide the Apply toolbar based on apply_enabled from the server
+  const applyToolbar = document.getElementById('instances-apply-toolbar');
+  if (applyToolbar) {
+    applyToolbar.style.display = data.apply_enabled ? '' : 'none';
+  }
+
   // Frequency source URL
   const freqURL = data.freq_url || '';
   let extraHtml =
@@ -686,6 +692,106 @@ function exportLatestFrequencies() {
   document.body.removeChild(a);
 }
 
+// ---- Apply modal -----------------------------------------------------------
+
+// openApplyModal shows the password modal for the given Apply endpoint.
+// title and desc are displayed inside the modal.
+// On successful authentication the endpoint is POSTed and the modal shows
+// a success message before closing.  The password is never stored or logged.
+function openApplyModal(endpoint, title, desc) {
+  const overlay  = document.getElementById('apply-modal');
+  const titleEl  = document.getElementById('modal-title');
+  const descEl   = document.getElementById('modal-desc');
+  const passEl   = document.getElementById('modal-pass');
+  const errorEl  = document.getElementById('modal-error');
+  const confirmBtn = document.getElementById('modal-confirm');
+  const cancelBtn  = document.getElementById('modal-cancel');
+
+  // Reset state
+  titleEl.textContent = title;
+  descEl.textContent  = desc;
+  passEl.value        = '';
+  errorEl.hidden      = true;
+  errorEl.textContent = '';
+  confirmBtn.disabled = false;
+  confirmBtn.textContent = 'Confirm';
+  overlay.hidden = false;
+  passEl.focus();
+
+  function close() {
+    overlay.hidden = true;
+    passEl.value   = '';
+    confirmBtn.removeEventListener('click', onConfirm);
+    cancelBtn.removeEventListener('click', onCancel);
+    overlay.removeEventListener('click', onOverlayClick);
+    passEl.removeEventListener('keydown', onKeydown);
+  }
+
+  function onCancel() { close(); }
+
+  function onOverlayClick(e) {
+    if (e.target === overlay) close();
+  }
+
+  function onKeydown(e) {
+    if (e.key === 'Enter') onConfirm();
+    if (e.key === 'Escape') close();
+  }
+
+  function onConfirm() {
+    const pass = passEl.value;
+    passEl.value = '';
+    errorEl.hidden = true;
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Applying…';
+
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pass }),
+    })
+      .then(r => {
+        if (r.ok) {
+          // Success — show message and auto-close after 2.5 s
+          confirmBtn.textContent = '✓ Done — service is restarting';
+          descEl.textContent = 'The frequency file has been updated. The service will restart momentarily.';
+          cancelBtn.textContent = 'Close';
+          cancelBtn.disabled = false;
+          setTimeout(close, 2500);
+        } else if (r.status === 401) {
+          errorEl.textContent = '✗ Incorrect password';
+          errorEl.hidden = false;
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Confirm';
+          passEl.focus();
+        } else if (r.status === 403) {
+          errorEl.textContent = '✗ Apply is not enabled on this server';
+          errorEl.hidden = false;
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Confirm';
+        } else {
+          r.json().catch(() => ({})).then(body => {
+            errorEl.textContent = '✗ ' + (body.error || `Server error (HTTP ${r.status})`);
+            errorEl.hidden = false;
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Confirm';
+          });
+        }
+      })
+      .catch(() => {
+        errorEl.textContent = '✗ Network error — please try again';
+        errorEl.hidden = false;
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Confirm';
+      });
+  }
+
+  confirmBtn.addEventListener('click', onConfirm);
+  cancelBtn.addEventListener('click', onCancel);
+  overlay.addEventListener('click', onOverlayClick);
+  passEl.addEventListener('keydown', onKeydown);
+}
+
 // ---- Boot ------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -704,6 +810,28 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-export-freqs').addEventListener('click', exportActiveFrequencies);
   document.getElementById('btn-export-all-freqs').addEventListener('click', exportAllFrequencies);
   document.getElementById('btn-export-latest-freqs').addEventListener('click', exportLatestFrequencies);
+
+  document.getElementById('btn-apply-freqs').addEventListener('click', () =>
+    openApplyModal(
+      '/apply/frequencies',
+      'Apply Active Frequencies',
+      'This will overwrite the frequency file with only the frequencies that have been active during this session, then restart the service.'
+    )
+  );
+  document.getElementById('btn-apply-all-freqs').addEventListener('click', () =>
+    openApplyModal(
+      '/apply/frequencies/all',
+      'Apply All Frequencies',
+      'This will overwrite the frequency file with every frequency marked as enabled, then restart the service.'
+    )
+  );
+  document.getElementById('btn-apply-latest-freqs').addEventListener('click', () =>
+    openApplyModal(
+      '/apply/frequencies/latest',
+      'Apply Latest Frequencies',
+      'This will fetch the latest frequency list from ubersdr.org, overwrite the frequency file, then restart the service.'
+    )
+  );
 
   // Re-render planes table when switching to that tab
   document.addEventListener('tabchange', (e) => {

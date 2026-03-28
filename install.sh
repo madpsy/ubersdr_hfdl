@@ -87,7 +87,7 @@ fi
 
 if ! grep -q "hfdl_frequencies.jsonl" "${COMPOSE_FILE}"; then
     # Inject volume mount under the service (before the first 'environment:' line)
-    sed -i "s|    environment:|    volumes:\n      - ./${FREQ_FILE}:${CONTAINER_FREQ_PATH}:ro\n    environment:|" "${COMPOSE_FILE}"
+    sed -i "s|    environment:|    volumes:\n      - ./${FREQ_FILE}:${CONTAINER_FREQ_PATH}\n    environment:|" "${COMPOSE_FILE}"
     # Set FREQ_URL env var (replace the commented-out placeholder if present, else append)
     if grep -q "# FREQ_URL:" "${COMPOSE_FILE}"; then
         sed -i "s|# FREQ_URL:.*|FREQ_URL: \"file://${CONTAINER_FREQ_PATH}\"|" "${COMPOSE_FILE}"
