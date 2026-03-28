@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/refs/heads/main"
+REPO_RAW="https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/master"
 FREQ_JSONL_URL="https://ubersdr.org/hfdl/hfdl_frequencies.jsonl"
 INSTALL_DIR="${HOME}/ubersdr/hfdl"
 COMPOSE_FILE="docker-compose.yml"
@@ -59,6 +59,17 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Fetch helper scripts
+# ---------------------------------------------------------------------------
+
+for script in update.sh start.sh stop.sh restart.sh; do
+    echo "Fetching ${script}..."
+    curl -fsSL "${REPO_RAW}/${script}" -o "${script}"
+    chmod +x "${script}"
+    echo "Saved ${script}"
+done
+
+# ---------------------------------------------------------------------------
 # Fetch HFDL frequency list
 # ---------------------------------------------------------------------------
 
@@ -94,5 +105,8 @@ docker compose up -d --remove-orphans --force-recreate
 
 echo ""
 echo "Done. hfdl_launcher is running."
-echo "  View logs : docker compose logs -f"
-echo "  Stop      : docker compose down"
+echo "  View logs  : docker compose logs -f  (or ./update.sh)"
+echo "  Stop       : ./stop.sh"
+echo "  Start      : ./start.sh"
+echo "  Restart    : ./restart.sh"
+echo "  Update     : ./update.sh"
