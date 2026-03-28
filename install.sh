@@ -59,11 +59,11 @@ fi
 # Pull image and start service
 # ---------------------------------------------------------------------------
 
-echo "Pulling Docker image..."
+echo "Pulling latest Docker image..."
 docker compose pull
 
-echo "Starting hfdl_launcher..."
-docker compose up -d
+echo "Starting / restarting hfdl_launcher..."
+docker compose up -d --remove-orphans --force-recreate
 
 echo ""
 echo "Done. hfdl_launcher is running."
