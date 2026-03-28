@@ -764,9 +764,9 @@ function openApplyModal(endpoint, title, desc) {
           // Success — show message, then reload the page after a short delay
           // to allow Docker to restart the container.
           confirmBtn.textContent = '✓ Done — restarting…';
-          descEl.textContent = 'The frequency file has been updated. The service is restarting — this page will reload in 8 seconds.';
+          descEl.textContent = 'The frequency file has been updated. The service is restarting — this page will reload in 5 seconds.';
           cancelBtn.style.display = 'none';
-          setTimeout(() => { location.reload(); }, 8000);
+          setTimeout(() => { location.reload(); }, 5000);
         } else if (r.status === 401) {
           errorEl.textContent = '✗ Incorrect password';
           errorEl.hidden = false;
