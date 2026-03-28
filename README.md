@@ -30,6 +30,63 @@ statistics dashboard.
 
 ---
 
+## Optimising Frequency Coverage
+
+By default the launcher fetches the full HFDL frequency list from
+[ubersdr.org/hfdl](https://ubersdr.org/hfdl/) and monitors **every** enabled
+frequency.  Over time you may find that many of those frequencies are never
+active from your location — monitoring them wastes IQ bandwidth and CPU.
+
+The **⚙ Instances** tab in the dashboard provides three export buttons to help
+you tune this:
+
+| Button | What it produces |
+|--------|-----------------|
+| **Export Active Frequencies** | A `hfdl_frequencies.jsonl` where only frequencies that received at least one message **during the current session** are marked as enabled |
+| **Export All Frequencies** | A `hfdl_frequencies.jsonl` where **every** frequency is marked as enabled (equivalent to the upstream default) |
+| **Export Latest Frequencies** | The current `hfdl_frequencies.jsonl` fetched directly from ubersdr.org, as-is |
+
+### Recommended workflow
+
+1. **Run for at least 24 hours** with the default (all frequencies enabled) so
+   the launcher has a chance to hear activity across different times of day and
+   propagation conditions.
+
+2. Open the dashboard, go to the **⚙ Instances** tab, and click
+   **Export Active Frequencies**.
+
+3. Replace the frequency file on the host:
+
+   ```bash
+   cp ~/Downloads/hfdl_frequencies.jsonl ~/ubersdr/hfdl/hfdl_frequencies.jsonl
+   ```
+
+4. Tell the container to use your local file instead of the upstream URL by
+   editing `~/ubersdr/hfdl/docker-compose.yml` and adding the `FREQ_URL`
+   environment variable and a volume mount:
+
+   ```yaml
+   environment:
+     - FREQ_URL=file:///data/hfdl_frequencies.jsonl
+   volumes:
+     - ./hfdl_frequencies.jsonl:/data/hfdl_frequencies.jsonl:ro
+   ```
+
+5. Restart the container:
+
+   ```bash
+   cd ~/ubersdr/hfdl && docker compose up -d
+   ```
+
+   The launcher will now only open IQ windows for the frequencies you have
+   actually heard, reducing CPU and bandwidth usage.
+
+> **Tip:** If propagation changes and you start missing stations, click
+> **Export All Frequencies** or **Export Latest Frequencies** to reset back to
+> the full list, replace the file, and restart the container.
+
+---
+
 ## Overview
 
 ```
