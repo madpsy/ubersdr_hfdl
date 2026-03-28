@@ -14,7 +14,7 @@ radio back-end and [dumphfdl](https://github.com/szpajder/dumphfdl) as the decod
 > **Run this command on the same machine as your UberSDR installation:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/refs/heads/main/install.sh | bash
 ```
 
 This will download `docker-compose.yml` into `~/ubersdr/hfdl/`, pull the image,

@@ -2,7 +2,7 @@
 # install.sh — fetch the docker-compose.yml from the ubersdr_hfdl repo and start the service
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/refs/heads/main/install.sh | bash
 #   — or —
 #   ./install.sh [--force-update]
 #
@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/master"
+REPO_RAW="https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/refs/heads/main"
 INSTALL_DIR="${HOME}/ubersdr/hfdl"
 COMPOSE_FILE="docker-compose.yml"
 FORCE_UPDATE="${FORCE_UPDATE:-0}"
