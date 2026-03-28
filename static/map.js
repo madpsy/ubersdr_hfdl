@@ -117,9 +117,12 @@ function renderHistory() {
   }
   historyControl._div.innerHTML = html;
 
-  // Attach click handlers to clickable rows
+  // Attach click handlers to clickable rows.
+  // Use L.DomEvent.on() so clicks are received even though
+  // disableClickPropagation() is set on the parent container.
   historyControl._div.querySelectorAll('.map-history__row--clickable').forEach(row => {
-    row.addEventListener('click', () => {
+    L.DomEvent.on(row, 'click', (e) => {
+      L.DomEvent.stopPropagation(e);
       const key = row.dataset.key;
       if (!key) return;
       selectAircraft(key);
@@ -174,9 +177,14 @@ function renderLegend() {
   }
   legendControl._div.innerHTML = html;
 
-  // Attach click handlers to legend rows
+  // Attach click handlers to legend rows.
+  // Use L.DomEvent.on() rather than addEventListener so that clicks are
+  // correctly received even though disableClickPropagation() is set on the
+  // parent container (native addEventListener can be swallowed in some
+  // Leaflet builds when propagation is stopped at the container level).
   legendControl._div.querySelectorAll('.map-legend__row--clickable').forEach(row => {
-    row.addEventListener('click', () => {
+    L.DomEvent.on(row, 'click', (e) => {
+      L.DomEvent.stopPropagation(e);
       const gsId = parseInt(row.dataset.gsId, 10);
       if (selectedGS === gsId) {
         deselectGS();
@@ -185,7 +193,7 @@ function renderLegend() {
         selectGS(gsId);
         renderLegend();
         // Pan to the GS marker if it exists and trigger the same behaviour as
-        // clicking the marker directly (fire a synthetic click so the popup opens)
+        // clicking the marker directly
         const marker = gsMarkers[gsId];
         if (marker) {
           hfdlMap.panTo(marker.getLatLng());
