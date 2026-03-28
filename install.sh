@@ -21,6 +21,7 @@ COMPOSE_FILE="docker-compose.yml"
 FREQ_FILE="hfdl_frequencies.jsonl"
 CONTAINER_FREQ_PATH="/data/hfdl_frequencies.jsonl"
 FORCE_UPDATE="${FORCE_UPDATE:-0}"
+CONFIG_PASS_FILE=".config_pass"
 
 # Parse flags when run directly (not piped)
 for arg in "$@"; do
@@ -45,6 +46,21 @@ docker compose version >/dev/null 2>&1 || die "docker compose plugin not found �
 
 mkdir -p "${INSTALL_DIR}"
 cd "${INSTALL_DIR}"
+
+# ---------------------------------------------------------------------------
+# Generate or load the config password
+# ---------------------------------------------------------------------------
+
+if [[ -f "${CONFIG_PASS_FILE}" ]]; then
+    CONFIG_PASS="$(cat "${CONFIG_PASS_FILE}")"
+    PASS_IS_NEW=0
+else
+    # Generate a strong 32-character alphanumeric password using /dev/urandom
+    CONFIG_PASS="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)"
+    echo "${CONFIG_PASS}" > "${CONFIG_PASS_FILE}"
+    chmod 600 "${CONFIG_PASS_FILE}"
+    PASS_IS_NEW=1
+fi
 
 # ---------------------------------------------------------------------------
 # Fetch compose file
@@ -105,6 +121,22 @@ if ! grep -q "hfdl_frequencies.jsonl" "${COMPOSE_FILE}"; then
 fi
 
 # ---------------------------------------------------------------------------
+# Inject CONFIG_PASS into compose file
+# ---------------------------------------------------------------------------
+
+if grep -q "# CONFIG_PASS:" "${COMPOSE_FILE}"; then
+    # Replace the commented-out placeholder with the actual password
+    sed -i "s|# CONFIG_PASS:.*|CONFIG_PASS: \"${CONFIG_PASS}\"|" "${COMPOSE_FILE}"
+elif grep -q "CONFIG_PASS:" "${COMPOSE_FILE}"; then
+    # Already set (e.g. re-run with --force-update) — update the value in place
+    sed -i "s|CONFIG_PASS:.*|CONFIG_PASS: \"${CONFIG_PASS}\"|" "${COMPOSE_FILE}"
+else
+    # Fallback: append before EXTRA_ARGS
+    sed -i "s|      EXTRA_ARGS:|      CONFIG_PASS: \"${CONFIG_PASS}\"\n      EXTRA_ARGS:|" "${COMPOSE_FILE}"
+fi
+echo "CONFIG_PASS set in ${COMPOSE_FILE}"
+
+# ---------------------------------------------------------------------------
 # Create IQ recordings directory on the host
 # ---------------------------------------------------------------------------
 
@@ -132,3 +164,19 @@ echo "  Stop       : ./stop.sh"
 echo "  Start      : ./start.sh"
 echo "  Restart    : ./restart.sh"
 echo "  Update     : ./update.sh"
+echo ""
+if [[ "${PASS_IS_NEW}" == "1" ]]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  CONFIG PASSWORD (auto-generated)"
+    echo ""
+    echo "  ${CONFIG_PASS}"
+    echo ""
+    echo "  This password protects the frequency Apply endpoints in the web UI."
+    echo "  It has been saved to: ${INSTALL_DIR}/${CONFIG_PASS_FILE}"
+    echo ""
+    echo "  To change it, edit CONFIG_PASS in ${INSTALL_DIR}/${COMPOSE_FILE}"
+    echo "  and run ./restart.sh  (also update ${CONFIG_PASS_FILE} to match)."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+else
+    echo "  Config password loaded from ${INSTALL_DIR}/${CONFIG_PASS_FILE}"
+fi
