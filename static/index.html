@@ -139,10 +139,11 @@
             <p class="toolbar-desc">Downloads the latest <code>hfdl_frequencies.jsonl</code> directly from ubersdr.org, as-is with no modifications.</p>
           </div>
         </div>
-        <!-- Apply toolbar — only rendered by JS when apply_enabled is true -->
-        <div id="instances-apply-toolbar" style="display:none">
-          <div class="toolbar-section-label">Apply to running config (requires password — restarts service)</div>
-          <div id="instances-apply-buttons" class="instances-toolbar">
+        <!-- Apply toolbar — shown always; content swapped by JS based on apply_enabled -->
+        <div id="instances-apply-toolbar">
+          <div class="toolbar-section-label">Apply to running config (restarts service)</div>
+          <!-- Shown when apply_enabled is true -->
+          <div id="instances-apply-buttons" class="instances-toolbar" style="display:none">
             <div class="toolbar-item">
               <button id="btn-apply-freqs" class="toolbar-btn toolbar-btn--apply">↺ Apply Active Frequencies</button>
               <p class="toolbar-desc">Overwrites the frequency file with only active frequencies, then restarts.</p>
@@ -156,6 +157,10 @@
               <p class="toolbar-desc">Fetches the latest frequency list from ubersdr.org, overwrites the file, then restarts.</p>
             </div>
           </div>
+          <!-- Shown when apply_enabled is false -->
+          <p id="instances-apply-hint" class="apply-hint" style="display:none">
+            Apply is disabled. To enable it, set a strong password via the <code>CONFIG_PASS</code> environment variable in your <code>docker-compose.yml</code> and restart the service.
+          </p>
         </div>
         <div class="instances-extra-args" id="instances-extra-args"></div>
         <div id="instances-windows"></div>

@@ -471,10 +471,19 @@ function renderInstances(data) {
   const windowsEl = document.getElementById('instances-windows');
   if (!extraEl || !windowsEl) return;
 
-  // Show/hide the Apply toolbar based on apply_enabled from the server
+  // Show the Apply toolbar always, but swap content based on apply_enabled.
   const applyToolbar = document.getElementById('instances-apply-toolbar');
   if (applyToolbar) {
-    applyToolbar.style.display = data.apply_enabled ? '' : 'none';
+    applyToolbar.style.display = '';
+    const applyButtons = document.getElementById('instances-apply-buttons');
+    const applyHint    = document.getElementById('instances-apply-hint');
+    if (data.apply_enabled) {
+      if (applyButtons) applyButtons.style.display = '';
+      if (applyHint)    applyHint.style.display    = 'none';
+    } else {
+      if (applyButtons) applyButtons.style.display = 'none';
+      if (applyHint)    applyHint.style.display    = '';
+    }
   }
 
   // Frequency source URL
