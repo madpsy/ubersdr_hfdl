@@ -108,7 +108,11 @@ fi
 # Create IQ recordings directory on the host
 # ---------------------------------------------------------------------------
 
+# The container runs as a non-root 'hfdl' user whose UID differs from the host
+# user.  chmod 777 ensures the container can write WAV files into the bind-mount
+# regardless of UID mapping.
 mkdir -p "${INSTALL_DIR}/${IQ_RECORDINGS_DIR}"
+chmod 777 "${INSTALL_DIR}/${IQ_RECORDINGS_DIR}"
 echo "IQ recordings directory ready: ${INSTALL_DIR}/${IQ_RECORDINGS_DIR}"
 
 # ---------------------------------------------------------------------------
