@@ -2,6 +2,8 @@ services:
   hfdl_launcher:
     image: madpsy/ubersdr_hfdl:latest
     restart: unless-stopped
+    ports:
+      - "6090:6090"
     environment:
       # Extra arguments forwarded to dumphfdl (after --)
       EXTRA_ARGS: "--output decoded:basestation:tcp:address=adsb.oarc.uk,port=32010"
