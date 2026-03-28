@@ -55,27 +55,17 @@ you tune this:
 2. Open the dashboard, go to the **⚙ Instances** tab, and click
    **Export Active Frequencies**.
 
-3. Replace the frequency file on the host:
+3. Replace the frequency file that `install.sh` already placed on the host:
 
    ```bash
    cp ~/Downloads/hfdl_frequencies.jsonl ~/ubersdr/hfdl/hfdl_frequencies.jsonl
    ```
 
-4. Tell the container to use your local file instead of the upstream URL by
-   editing `~/ubersdr/hfdl/docker-compose.yml` and adding the `FREQ_URL`
-   environment variable and a volume mount:
-
-   ```yaml
-   environment:
-     - FREQ_URL=file:///data/hfdl_frequencies.jsonl
-   volumes:
-     - ./hfdl_frequencies.jsonl:/data/hfdl_frequencies.jsonl:ro
-   ```
-
-5. Restart the container:
+4. Restart the container to pick up the new file:
 
    ```bash
-   cd ~/ubersdr/hfdl && docker compose up -d
+   cd ~/ubersdr/hfdl
+   ./restart.sh
    ```
 
    The launcher will now only open IQ windows for the frequencies you have
@@ -83,7 +73,7 @@ you tune this:
 
 > **Tip:** If propagation changes and you start missing stations, click
 > **Export All Frequencies** or **Export Latest Frequencies** to reset back to
-> the full list, replace the file, and restart the container.
+> the full list, replace the file, and run `./restart.sh` again.
 
 ---
 
