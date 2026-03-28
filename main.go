@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -46,6 +47,30 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/klauspost/compress/zstd"
 )
+
+const rcvBufSize = 16 * 1024 * 1024 // 16 MiB SO_RCVBUF for the IQ WebSocket connection
+
+// wsDialer is a websocket.Dialer that sets SO_RCVBUF = 16 MiB on the
+// underlying TCP socket before the WebSocket handshake.
+var wsDialer = &websocket.Dialer{
+	HandshakeTimeout: 10 * time.Second,
+	NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		nd := &net.Dialer{}
+		conn, err := nd.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		if tc, ok := conn.(*net.TCPConn); ok {
+			raw, err := tc.SyscallConn()
+			if err == nil {
+				_ = raw.Control(func(fd uintptr) {
+					_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, rcvBufSize)
+				})
+			}
+		}
+		return conn, nil
+	},
+}
 
 // ---------------------------------------------------------------------------
 // IQ mode table
@@ -315,7 +340,7 @@ func (c *client) runOnce() (reconnect bool) {
 
 	hdr := http.Header{}
 	hdr.Set("User-Agent", "ubersdr_hfdl/1.0")
-	conn, _, err := websocket.DefaultDialer.Dial(wsAddr, hdr)
+	conn, _, err := wsDialer.Dial(wsAddr, hdr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "websocket dial: %v\n", err)
 		return c.autoReconnect
