@@ -229,7 +229,8 @@ function makePlaneIcon(ac, selected) {
 
 // ---- Layer visibility state ------------------------------------------------
 let showGSMarkers = true;
-let showAcLabels  = true;
+let showAcLabels  = false;
+let showPlanes    = true;
 
 // ---- Map stats counter (bottom-left) ---------------------------------------
 let statsCountControl = null;
@@ -440,6 +441,17 @@ function toggleAcLabels(visible) {
   }
 }
 
+function togglePlanes(visible) {
+  showPlanes = visible;
+  for (const m of Object.values(aircraftMarkers)) {
+    if (visible) {
+      if (!hfdlMap.hasLayer(m)) m.addTo(hfdlMap);
+    } else {
+      if (hfdlMap.hasLayer(m)) m.remove();
+    }
+  }
+}
+
 // ---- Layer toggle control --------------------------------------------------
 let layerControl = null;
 
@@ -457,7 +469,11 @@ function initLayerControl() {
         `<span>Ground stations</span>` +
       `</label>` +
       `<label class="map-layer-ctrl__row">` +
-        `<input type="checkbox" id="lyr-labels" checked>` +
+        `<input type="checkbox" id="lyr-planes" checked>` +
+        `<span>Planes</span>` +
+      `</label>` +
+      `<label class="map-layer-ctrl__row">` +
+        `<input type="checkbox" id="lyr-labels">` +
         `<span>Plane labels</span>` +
       `</label>` +
       `<label class="map-layer-ctrl__row">` +
@@ -467,6 +483,9 @@ function initLayerControl() {
 
     div.querySelector('#lyr-gs').addEventListener('change', e => {
       toggleGSMarkers(e.target.checked);
+    });
+    div.querySelector('#lyr-planes').addEventListener('change', e => {
+      togglePlanes(e.target.checked);
     });
     div.querySelector('#lyr-labels').addEventListener('change', e => {
       toggleAcLabels(e.target.checked);
@@ -487,6 +506,9 @@ function initMap() {
     zoomControl: true,
   });
 
+  // Apply default layer states that differ from the CSS baseline
+  // (plane labels are off by default)
+
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 18,
@@ -494,6 +516,9 @@ function initMap() {
 
   // Click on the map background deselects
   hfdlMap.on('click', () => deselectAircraft());
+
+  // Apply the default "labels off" state to the map container
+  hfdlMap.getContainer().classList.add('hide-ac-labels');
 
   loadAircraft();
   loadGSMarkers();
@@ -569,8 +594,8 @@ function upsertMarker(ac, fromSSE = false) {
       .setPopupContent(popup);
   } else {
     const marker = L.marker([ac.lat, ac.lon], { icon })
-      .bindPopup(popup, { autoPan: false })
-      .addTo(hfdlMap);
+      .bindPopup(popup, { autoPan: false });
+    if (showPlanes) marker.addTo(hfdlMap);
 
     marker.on('mouseover', () => marker.openPopup());
     marker.on('mouseout',  () => marker.closePopup());
