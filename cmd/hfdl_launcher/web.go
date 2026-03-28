@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -133,12 +134,27 @@ func startWebServer(port int, staticDir string, store *statsStore, groups []freq
 		w.Write(data) //nolint:errcheck
 	})
 
-	// /export/frequencies/latest — proxy the upstream JSONL directly to the client
+	// /export/frequencies/latest — proxy the upstream JSONL directly to the client.
+	// Always fetches from the canonical ubersdr.org URL regardless of the configured
+	// freq-url (which may be a local file:// path).
 	mux.HandleFunc("/export/frequencies/latest", func(w http.ResponseWriter, r *http.Request) {
-		upstream := freqURL
-		if upstream == "" {
-			upstream = defaultFreqURL
+		upstream := defaultFreqURL
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", `attachment; filename="hfdl_frequencies.jsonl"`)
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		if strings.HasPrefix(upstream, "file://") {
+			path := strings.TrimPrefix(upstream, "file://")
+			f, err := os.Open(path)
+			if err != nil {
+				http.Error(w, "failed to open local frequency file: "+err.Error(), http.StatusBadGateway)
+				return
+			}
+			defer f.Close()
+			io.Copy(w, f) //nolint:errcheck
+			return
 		}
+
 		resp, err := http.Get(upstream) //nolint:noctx
 		if err != nil {
 			http.Error(w, "failed to fetch upstream frequency list: "+err.Error(), http.StatusBadGateway)
@@ -149,9 +165,6 @@ func startWebServer(port int, staticDir string, store *statsStore, groups []freq
 			http.Error(w, fmt.Sprintf("upstream returned HTTP %d", resp.StatusCode), http.StatusBadGateway)
 			return
 		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		w.Header().Set("Content-Disposition", `attachment; filename="hfdl_frequencies.jsonl"`)
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		io.Copy(w, resp.Body) //nolint:errcheck
 	})
 
