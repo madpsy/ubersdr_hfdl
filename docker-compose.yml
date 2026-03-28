@@ -1,0 +1,15 @@
+services:
+  hfdl_launcher:
+    image: madpsy/ubersdr_hfdl:latest
+    restart: unless-stopped
+    environment:
+      # Extra arguments forwarded to dumphfdl (after --)
+      EXTRA_ARGS: "--output decoded:basestation:tcp:address=adsb.oarc.uk,port=32010"
+      # Uncomment and set as needed:
+      # UBERSDR_URL: "http://172.20.0.1:8080"
+      # PASS: ""
+      # STATION: "1,2,3"
+      # SYSTEM_TABLE: ""
+      # FREQ_URL: ""
+      # SILENT: "0"
+      # DRY_RUN: "0"

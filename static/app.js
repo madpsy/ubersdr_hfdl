@@ -29,8 +29,21 @@ let gsNames = {};
 // ---- Heard-frequency lookup ------------------------------------------------
 // Built from /stats frequencies[].gs_stats on each stats refresh.
 // Keys are gs_id (number), values are Set<freq_khz> of frequencies we have
-// actually received a message from that ground station on.
+// actually received a message from that ground station on (as source).
 let heardFreqsByGS = {};
+
+// ---- Active-frequency set --------------------------------------------------
+// Built from /stats frequencies[] on each stats refresh.
+// Contains freq_khz values where at least one message has been received
+// (regardless of ground station). Used to highlight frequencies in the
+// Instances tab.
+let activeFreqsKHz = new Set();
+
+// ---- Destination-frequency lookup ------------------------------------------
+// Built from /groundstations dst_freqs_khz on each refresh.
+// Keys are gs_id (number), values are Set<freq_khz> of frequencies where this
+// GS has been seen as the destination of a message.
+let dstFreqsByGS = {};
 
 function gsLabel(type, id) {
   if (type === 'Ground station' && gsNames[id]) {
@@ -206,10 +219,15 @@ function loadStats() {
 
       renderFreqTable(data.frequencies);
 
-      // Build heardFreqsByGS from per-GS stats on each frequency
+      // Build heardFreqsByGS from per-GS stats on each frequency.
+      // activeFreqsKHz is only ever added to (never reset) so that frequencies
+      // seen via SSE events are not lost when a stats refresh arrives.
       heardFreqsByGS = {};
       if (Array.isArray(data.frequencies)) {
         for (const freq of data.frequencies) {
+          // Any entry in the frequencies array means at least one message was
+          // received on that frequency, regardless of source type.
+          activeFreqsKHz.add(freq.freq_khz);
           if (!freq.gs_stats) continue;
           for (const gsIdStr of Object.keys(freq.gs_stats)) {
             const gsId = parseInt(gsIdStr, 10);
@@ -220,6 +238,8 @@ function loadStats() {
       }
       // Always fetch ground stations after stats so heardFreqsByGS is ready
       loadGroundStations();
+      // Re-render instances tab so activeFreqsKHz highlights are up to date
+      if (cachedInstancesData) renderInstances(cachedInstancesData);
 
       if (data.recent && data.recent.length > 0) {
         const tbody = document.getElementById('feed-tbody');
@@ -262,6 +282,11 @@ function handleSSEEvent(raw) {
     const lbl = document.getElementById('total-label');
     const cur = parseInt(lbl.textContent.replace(/\D/g, ''), 10) || 0;
     lbl.textContent = 'Total messages: ' + (cur + 1).toLocaleString();
+    // Mark this frequency as active immediately and re-render instances chips
+    if (data.freq_khz) {
+      activeFreqsKHz.add(data.freq_khz);
+      if (cachedInstancesData) renderInstances(cachedInstancesData);
+    }
 
   } else if (type === 'position') {
     // Update local store and re-render planes table if visible
@@ -381,10 +406,13 @@ function renderGroundStations(stations) {
 
   container.innerHTML = stations.map(gs => {
     const heardSet = heardFreqsByGS[gs.gs_id];
+    const dstSet   = dstFreqsByGS[gs.gs_id];
     const freqs = (gs.frequencies || [])
       .map(f => {
         const isHeard = heardSet && heardSet.has(f.freq_khz);
-        return `<span class="gs-freq${isHeard ? ' gs-freq--heard' : ''}">${f.freq_khz.toLocaleString()}<span class="gs-slot">T${f.timeslot}</span></span>`;
+        const isDst   = dstSet   && dstSet.has(f.freq_khz);
+        const cls = isHeard ? ' gs-freq--heard' : isDst ? ' gs-freq--dst' : '';
+        return `<span class="gs-freq${cls}">${f.freq_khz.toLocaleString()}<span class="gs-slot">T${f.timeslot}</span></span>`;
       })
       .join('');
     const heard = gs.last_heard > 0;
@@ -405,16 +433,32 @@ function renderGroundStations(stations) {
 function loadGroundStations() {
   fetch('/groundstations')
     .then(r => r.json())
-    .then(data => renderGroundStations(data))
+    .then(data => {
+      // Build dstFreqsByGS from the dst_freqs_khz field on each station
+      dstFreqsByGS = {};
+      for (const gs of data) {
+        if (Array.isArray(gs.dst_freqs_khz) && gs.dst_freqs_khz.length > 0) {
+          dstFreqsByGS[gs.gs_id] = new Set(gs.dst_freqs_khz);
+        }
+      }
+      renderGroundStations(data);
+    })
     .catch(err => console.warn('groundstations fetch error:', err));
 }
 
 // ---- Instances tab ---------------------------------------------------------
 
+// Cache the last /instances response so we can re-render when activeFreqsKHz
+// is updated by a stats refresh.
+let cachedInstancesData = null;
+
 function loadInstances() {
-  fetch('/instances')
+  return fetch('/instances')
     .then(r => r.json())
-    .then(data => renderInstances(data))
+    .then(data => {
+      cachedInstancesData = data;
+      renderInstances(data);
+    })
     .catch(err => console.warn('instances fetch error:', err));
 }
 
@@ -445,7 +489,10 @@ function renderInstances(data) {
   let html = `<div class="instances-section-title">IQ Windows (${windows.length})</div>`;
   html += `<div class="instances-grid">`;
   for (const w of windows) {
-    const freqs = (w.freqs_khz || []).map(f => `<span class="instances-freq">${f.toLocaleString()}</span>`).join('');
+    const freqs = (w.freqs_khz || []).map(f => {
+      const active = activeFreqsKHz.has(f);
+      return `<span class="instances-freq${active ? ' instances-freq--active' : ''}">${f.toLocaleString()}</span>`;
+    }).join('');
     html +=
       `<div class="instances-card">` +
         `<div class="instances-card__header">` +
@@ -587,18 +634,33 @@ function renderSignalCharts(series) {
   }
 }
 
+// ---- Export active frequencies ---------------------------------------------
+
+function exportActiveFrequencies() {
+  const a = document.createElement('a');
+  a.href = '/export/frequencies';
+  a.download = 'hfdl_frequencies.jsonl';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 // ---- Boot ------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
-  loadStats();
+  // Chain instances → stats so that cachedInstancesData is set before loadStats()
+  // calls renderInstances(), ensuring frequency chips are coloured correctly on
+  // the first render after a page load.
+  loadInstances().then(() => loadStats());
   loadAircraftTab();
-  loadInstances();
   loadSignalHistory();
   setInterval(loadSignalHistory, 60_000);
   connectSSE();
   startPeriodicRefresh(15000);
   setInterval(tickUptime, 1_000);
+
+  document.getElementById('btn-export-freqs').addEventListener('click', exportActiveFrequencies);
 
   // Re-render planes table when switching to that tab
   document.addEventListener('tabchange', (e) => {

@@ -110,6 +110,15 @@ func startWebServer(port int, staticDir string, store *statsStore, groups []freq
 		}
 	})
 
+	// /export/frequencies — JSONL download with enabled field set per observed activity
+	mux.HandleFunc("/export/frequencies", func(w http.ResponseWriter, r *http.Request) {
+		data := store.exportActiveFrequencies()
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", `attachment; filename="hfdl_frequencies.jsonl"`)
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Write(data) //nolint:errcheck
+	})
+
 	// /groundstations — full ground station list with frequencies and last-heard times
 	mux.HandleFunc("/groundstations", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

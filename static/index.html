@@ -78,6 +78,20 @@
 
     <!-- Ground stations tab -->
     <section id="tab-gs" class="tab-panel">
+      <div id="gs-legend">
+        <span class="gs-legend-item">
+          <span class="gs-freq gs-freq--heard">8927<span class="gs-slot">T12</span></span>
+          Received message <em>from</em> this ground station
+        </span>
+        <span class="gs-legend-item">
+          <span class="gs-freq gs-freq--dst">8927<span class="gs-slot">T12</span></span>
+          Received message <em>destined for</em> this ground station (not as source)
+        </span>
+        <span class="gs-legend-item">
+          <span class="gs-freq">8927<span class="gs-slot">T12</span></span>
+          No messages received
+        </span>
+      </div>
       <div id="gs-grid"></div>
     </section>
 
@@ -107,6 +121,9 @@
     <!-- Instances tab -->
     <section id="tab-instances" class="tab-panel">
       <div id="instances-content">
+        <div id="instances-toolbar">
+          <button id="btn-export-freqs" class="toolbar-btn">⬇ Export Active Frequencies</button>
+        </div>
         <div class="instances-extra-args" id="instances-extra-args"></div>
         <div id="instances-windows"></div>
       </div>

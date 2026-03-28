@@ -94,17 +94,17 @@ type SigBucket struct {
 	Min   float64 `json:"min"` // minimum dBFS
 	Max   float64 `json:"max"` // maximum dBFS
 	Count int64   `json:"n"`   // number of samples
-	sum   float64              // running sum (not serialised)
+	sum   float64 // running sum (not serialised)
 }
 
-const sigBucketSecs  = 1800 // 30 minutes
-const maxSigBuckets  = 96   // 48 hours of history
+const sigBucketSecs = 1800 // 30 minutes
+const maxSigBuckets = 96   // 48 hours of history
 
 // GSFreqStats holds per-ground-station statistics on a specific frequency.
 type GSFreqStats struct {
 	GSID        int          `json:"gs_id"`
 	MsgCount    int64        `json:"msg_count"`
-	LastSeen    int64        `json:"last_seen"`    // unix seconds
+	LastSeen    int64        `json:"last_seen"`     // unix seconds
 	AvgSigLevel float64      `json:"avg_sig_level"` // current-bucket average
 	Buckets     []*SigBucket `json:"sig_history"`   // oldest-first, capped at maxSigBuckets
 }
@@ -145,9 +145,9 @@ func (g *GSFreqStats) addSigSample(t int64, sig float64) {
 
 // FreqStats holds per-frequency statistics, broken down by heard ground station.
 type FreqStats struct {
-	FreqHz  int64                  `json:"freq_hz"`
-	FreqKHz int64                  `json:"freq_khz"`
-	GSStats map[int]*GSFreqStats   `json:"gs_stats"` // gs_id → stats (only heard GS)
+	FreqHz  int64                `json:"freq_hz"`
+	FreqKHz int64                `json:"freq_khz"`
+	GSStats map[int]*GSFreqStats `json:"gs_stats"` // gs_id → stats (only heard GS)
 }
 
 // TrackPoint is a single historical position fix for an aircraft.
@@ -161,7 +161,7 @@ const maxTrackPoints = 500
 
 // AircraftState holds the last-known position and identity of an aircraft.
 type AircraftState struct {
-	Key      string       `json:"key"`      // ICAO hex if known, else registration
+	Key      string       `json:"key"` // ICAO hex if known, else registration
 	ICAO     string       `json:"icao,omitempty"`
 	Reg      string       `json:"reg,omitempty"`
 	Flight   string       `json:"flight,omitempty"`
@@ -172,8 +172,8 @@ type AircraftState struct {
 	MsgCount int64        `json:"msg_count"`       // total messages seen for this aircraft
 	SigLevel float64      `json:"sig_level"`       // signal level (dBFS) of the last received message
 	LastSeen int64        `json:"last_seen"`       // unix seconds
-	Bearing  float64      `json:"bearing"`  // degrees clockwise from north, 0 if unknown
-	Track    []TrackPoint `json:"-"`        // position history, served via /aircraft/{key}/track only
+	Bearing  float64      `json:"bearing"`         // degrees clockwise from north, 0 if unknown
+	Track    []TrackPoint `json:"-"`               // position history, served via /aircraft/{key}/track only
 }
 
 // RecentMessage is a trimmed record for the live feed.
@@ -221,24 +221,26 @@ type groundStationResponse struct {
 	Lon           float64       `json:"lon,omitempty"`
 	Freqs         []gsFrequency `json:"frequencies"`
 	LastHeard     int64         `json:"last_heard,omitempty"`      // unix seconds, 0 = never heard
-	HeardFreqsKHz []int64       `json:"heard_freqs_khz,omitempty"` // frequencies actually heard on
+	HeardFreqsKHz []int64       `json:"heard_freqs_khz,omitempty"` // frequencies actually heard on (as source)
+	DstFreqsKHz   []int64       `json:"dst_freqs_khz,omitempty"`   // frequencies seen as destination only
 	LastSigLevel  float64       `json:"last_sig_level,omitempty"`  // most recent signal level (dBFS) when GS was source
 }
 
 // statsStore holds all aggregated statistics and the SSE subscriber list.
 type statsStore struct {
-	mu              sync.RWMutex
-	startTime       time.Time
-	total           int64
-	freqs           map[int64]*FreqStats
-	recent          []RecentMessage
-	aircraft        map[string]*AircraftState  // keyed by ICAO or reg
-	heardGS         map[int]int64              // gs_id → last_heard unix seconds
-	heardGSFreqs    map[int]map[int64]struct{} // gs_id → set of freq_khz heard on
-	heardGSLastSig  map[int]float64            // gs_id → most recent signal level (dBFS) when GS was source
-	gsNames         map[int]string             // gs_id → location name (read-only after init)
-	freqGSID        map[int][]int              // freq_khz → []gs_id (read-only after init)
-	stations        []groundStation            // all ground stations sorted by ID (read-only after init)
+	mu             sync.RWMutex
+	startTime      time.Time
+	total          int64
+	freqs          map[int64]*FreqStats
+	recent         []RecentMessage
+	aircraft       map[string]*AircraftState  // keyed by ICAO or reg
+	heardGS        map[int]int64              // gs_id → last_heard unix seconds
+	heardGSFreqs   map[int]map[int64]struct{} // gs_id → set of freq_khz heard on (as source)
+	dstGSFreqs     map[int]map[int64]struct{} // gs_id → set of freq_khz seen as destination
+	heardGSLastSig map[int]float64            // gs_id → most recent signal level (dBFS) when GS was source
+	gsNames        map[int]string             // gs_id → location name (read-only after init)
+	freqGSID       map[int][]int              // freq_khz → []gs_id (read-only after init)
+	stations       []groundStation            // all ground stations sorted by ID (read-only after init)
 
 	subsMu sync.Mutex
 	subs   map[chan string]struct{}
@@ -257,6 +259,7 @@ func newStatsStore(gsNames map[int]string, freqGSID map[int][]int, stations []gr
 		aircraft:       make(map[string]*AircraftState),
 		heardGS:        make(map[int]int64),
 		heardGSFreqs:   make(map[int]map[int64]struct{}),
+		dstGSFreqs:     make(map[int]map[int64]struct{}),
 		heardGSLastSig: make(map[int]float64),
 		gsNames:        gsNames,
 		freqGSID:       freqGSID,
@@ -343,6 +346,13 @@ func (s *statsStore) ingest(line string) {
 
 		if h.LPDU.Src.Type == "Ground station" {
 			recordGSSrc(h.LPDU.Src.ID)
+		}
+		if h.LPDU.Dst.Type == "Ground station" {
+			dstID := h.LPDU.Dst.ID
+			if s.dstGSFreqs[dstID] == nil {
+				s.dstGSFreqs[dstID] = make(map[int64]struct{})
+			}
+			s.dstGSFreqs[dstID][freqKHz] = struct{}{}
 		}
 
 		// Gather identity fields
@@ -613,6 +623,14 @@ func (s *statsStore) groundStationsSnapshot() []groundStationResponse {
 			}
 			sort.Slice(heardFreqs, func(a, b int) bool { return heardFreqs[a] < heardFreqs[b] })
 		}
+		var dstFreqs []int64
+		if fset := s.dstGSFreqs[gs.GSID]; len(fset) > 0 {
+			dstFreqs = make([]int64, 0, len(fset))
+			for f := range fset {
+				dstFreqs = append(dstFreqs, f)
+			}
+			sort.Slice(dstFreqs, func(a, b int) bool { return dstFreqs[a] < dstFreqs[b] })
+		}
 		result[i] = groundStationResponse{
 			GSID:          gs.GSID,
 			Location:      gs.Location,
@@ -621,10 +639,64 @@ func (s *statsStore) groundStationsSnapshot() []groundStationResponse {
 			Freqs:         gs.Freqs,
 			LastHeard:     s.heardGS[gs.GSID],
 			HeardFreqsKHz: heardFreqs,
+			DstFreqsKHz:   dstFreqs,
 			LastSigLevel:  s.heardGSLastSig[gs.GSID],
 		}
 	}
 	return result
+}
+
+// exportActiveFrequencies returns a JSONL byte slice identical in structure to
+// the original hfdl_frequencies.jsonl, with each frequency's enabled field set
+// to true only if at least one message has been received on that frequency.
+func (s *statsStore) exportActiveFrequencies() []byte {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Build set of active freq_khz values from the freqs map.
+	activeKHz := make(map[int64]bool, len(s.freqs))
+	for khz := range s.freqs {
+		activeKHz[khz/1000] = true
+	}
+
+	type exportFreq struct {
+		FreqKHz  int  `json:"freq_khz"`
+		Timeslot int  `json:"timeslot"`
+		Enabled  bool `json:"enabled"`
+	}
+	type exportStation struct {
+		GSID     int          `json:"gs_id"`
+		Location string       `json:"location"`
+		Lat      float64      `json:"lat"`
+		Lon      float64      `json:"lon"`
+		Freqs    []exportFreq `json:"frequencies"`
+	}
+
+	var buf []byte
+	for _, gs := range s.stations {
+		freqs := make([]exportFreq, len(gs.Freqs))
+		for i, f := range gs.Freqs {
+			freqs[i] = exportFreq{
+				FreqKHz:  f.FreqKHz,
+				Timeslot: f.Timeslot,
+				Enabled:  activeKHz[int64(f.FreqKHz)],
+			}
+		}
+		row := exportStation{
+			GSID:     gs.GSID,
+			Location: gs.Location,
+			Lat:      gs.Lat,
+			Lon:      gs.Lon,
+			Freqs:    freqs,
+		}
+		b, err := json.Marshal(row)
+		if err != nil {
+			continue
+		}
+		buf = append(buf, b...)
+		buf = append(buf, '\n')
+	}
+	return buf
 }
 
 // ---------------------------------------------------------------------------

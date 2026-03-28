@@ -268,6 +268,24 @@ td.empty {
   padding: 16px 20px;
 }
 
+#gs-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.gs-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 #gs-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -331,6 +349,12 @@ td.empty {
   background: rgba(63, 185, 80, 0.15);
   color: #3fb950;
   border-color: rgba(63, 185, 80, 0.45);
+}
+
+.gs-freq--dst {
+  background: rgba(210, 153, 34, 0.15);
+  color: #d29922;
+  border-color: rgba(210, 153, 34, 0.45);
 }
 
 .gs-slot {
@@ -756,6 +780,27 @@ td.empty {
 
 /* ---- Instances tab ---- */
 
+#instances-toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.toolbar-btn {
+  background: var(--surface);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.toolbar-btn:hover {
+  background: rgba(88, 166, 255, 0.12);
+}
+
 #instances-content {
   padding: 20px;
   max-width: 1100px;
@@ -840,6 +885,12 @@ td.empty {
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text);
+}
+
+.instances-freq--active {
+  background: rgba(63, 185, 80, 0.15);
+  border-color: rgba(63, 185, 80, 0.45);
+  color: #3fb950;
 }
 
 /* ---- Signal history tab ---- */

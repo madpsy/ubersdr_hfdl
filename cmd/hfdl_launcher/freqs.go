@@ -14,8 +14,9 @@ import (
 // ---------------------------------------------------------------------------
 
 type gsFrequency struct {
-	FreqKHz  int `json:"freq_khz"`
-	Timeslot int `json:"timeslot"`
+	FreqKHz  int  `json:"freq_khz"`
+	Timeslot int  `json:"timeslot"`
+	Enabled  bool `json:"enabled"`
 }
 
 type groundStation struct {
@@ -129,10 +130,10 @@ func groupFrequencies(freqs []int) []freqGroup {
 
 // fetchResult holds the output of fetchFrequencies.
 type fetchResult struct {
-	Freqs      []int              // sorted unique frequencies in kHz
-	GSNames    map[int]string     // gs_id → location name (all stations)
-	FreqGSID   map[int][]int      // freq_khz → sorted list of gs_ids that use it
-	Stations   []groundStation    // all ground stations sorted by gs_id
+	Freqs    []int           // sorted unique frequencies in kHz
+	GSNames  map[int]string  // gs_id → location name (all stations)
+	FreqGSID map[int][]int   // freq_khz → sorted list of gs_ids that use it
+	Stations []groundStation // all ground stations sorted by gs_id
 }
 
 // fetchFrequencies fetches the HFDL ground station JSONL and returns:
@@ -170,6 +171,9 @@ func fetchFrequencies(freqURL string, stationIDs map[int]bool) (fetchResult, err
 		}
 		allStations = append(allStations, gs)
 		for _, f := range gs.Freqs {
+			if !f.Enabled {
+				continue
+			}
 			if freqGSID[f.FreqKHz] == nil {
 				freqGSID[f.FreqKHz] = make(map[int]bool)
 			}
@@ -180,6 +184,9 @@ func fetchFrequencies(freqURL string, stationIDs map[int]bool) (fetchResult, err
 			continue
 		}
 		for _, f := range gs.Freqs {
+			if !f.Enabled {
+				continue
+			}
 			seen[f.FreqKHz] = true
 		}
 	}
