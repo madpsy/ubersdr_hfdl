@@ -4,13 +4,28 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/master/install.sh | bash
 #   — or —
-#   ./install.sh
+#   ./install.sh [--force-update]
+#
+# Options:
+#   --force-update   Overwrite an existing docker-compose.yml (default: skip if present)
+#
+# When piping through bash, pass the flag via env var instead:
+#   curl -fsSL ... | FORCE_UPDATE=1 bash
 
 set -euo pipefail
 
 REPO_RAW="https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/master"
 INSTALL_DIR="${HOME}/ubersdr/hfdl"
 COMPOSE_FILE="docker-compose.yml"
+FORCE_UPDATE="${FORCE_UPDATE:-0}"
+
+# Parse flags when run directly (not piped)
+for arg in "$@"; do
+    case "$arg" in
+        --force-update) FORCE_UPDATE=1 ;;
+        *) echo "Unknown argument: $arg" >&2; exit 1 ;;
+    esac
+done
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -32,10 +47,13 @@ cd "${INSTALL_DIR}"
 # Fetch compose file
 # ---------------------------------------------------------------------------
 
-echo "Fetching ${COMPOSE_FILE} from GitHub..."
-curl -fsSL "${REPO_RAW}/${COMPOSE_FILE}" -o "${COMPOSE_FILE}"
-
-echo "Saved ${COMPOSE_FILE}"
+if [[ -f "${COMPOSE_FILE}" && "${FORCE_UPDATE}" != "1" ]]; then
+    echo "${COMPOSE_FILE} already exists — skipping download (use --force-update to overwrite)"
+else
+    echo "Fetching ${COMPOSE_FILE} from GitHub..."
+    curl -fsSL "${REPO_RAW}/${COMPOSE_FILE}" -o "${COMPOSE_FILE}"
+    echo "Saved ${COMPOSE_FILE}"
+fi
 
 # ---------------------------------------------------------------------------
 # Pull image and start service
