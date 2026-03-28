@@ -55,8 +55,10 @@ if [[ -f "${CONFIG_PASS_FILE}" ]]; then
     CONFIG_PASS="$(cat "${CONFIG_PASS_FILE}")"
     PASS_IS_NEW=0
 else
-    # Generate a strong 32-character alphanumeric password using /dev/urandom
-    CONFIG_PASS="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)"
+    # Generate a strong 16-character alphanumeric password using /dev/urandom.
+    # Run in a subshell with pipefail disabled: head -c closes the pipe early
+    # which sends SIGPIPE to tr; that is expected and must not abort the script.
+    CONFIG_PASS="$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)"
     echo "${CONFIG_PASS}" > "${CONFIG_PASS_FILE}"
     chmod 600 "${CONFIG_PASS_FILE}"
     PASS_IS_NEW=1
