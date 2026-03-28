@@ -646,6 +646,53 @@ func (s *statsStore) groundStationsSnapshot() []groundStationResponse {
 	return result
 }
 
+// exportAllFrequencies returns a JSONL byte slice identical in structure to
+// the original hfdl_frequencies.jsonl, with every frequency's enabled field
+// unconditionally set to true.
+func (s *statsStore) exportAllFrequencies() []byte {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	type exportFreq struct {
+		FreqKHz  int  `json:"freq_khz"`
+		Timeslot int  `json:"timeslot"`
+		Enabled  bool `json:"enabled"`
+	}
+	type exportStation struct {
+		GSID     int          `json:"gs_id"`
+		Location string       `json:"location"`
+		Lat      float64      `json:"lat"`
+		Lon      float64      `json:"lon"`
+		Freqs    []exportFreq `json:"frequencies"`
+	}
+
+	var buf []byte
+	for _, gs := range s.stations {
+		freqs := make([]exportFreq, len(gs.Freqs))
+		for i, f := range gs.Freqs {
+			freqs[i] = exportFreq{
+				FreqKHz:  f.FreqKHz,
+				Timeslot: f.Timeslot,
+				Enabled:  true,
+			}
+		}
+		row := exportStation{
+			GSID:     gs.GSID,
+			Location: gs.Location,
+			Lat:      gs.Lat,
+			Lon:      gs.Lon,
+			Freqs:    freqs,
+		}
+		b, err := json.Marshal(row)
+		if err != nil {
+			continue
+		}
+		buf = append(buf, b...)
+		buf = append(buf, '\n')
+	}
+	return buf
+}
+
 // exportActiveFrequencies returns a JSONL byte slice identical in structure to
 // the original hfdl_frequencies.jsonl, with each frequency's enabled field set
 // to true only if at least one message has been received on that frequency.

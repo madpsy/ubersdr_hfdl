@@ -789,8 +789,29 @@ td.empty {
 
 #instances-toolbar {
   display: flex;
-  gap: 10px;
+  gap: 16px;
   margin-bottom: 20px;
+  align-items: flex-start;
+}
+
+.toolbar-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 260px;
+}
+
+.toolbar-desc {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.toolbar-desc code {
+  font-family: var(--font-mono);
+  color: var(--fg);
+  font-size: 10px;
 }
 
 .toolbar-btn {

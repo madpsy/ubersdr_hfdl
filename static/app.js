@@ -668,6 +668,15 @@ function exportActiveFrequencies() {
   document.body.removeChild(a);
 }
 
+function exportAllFrequencies() {
+  const a = document.createElement('a');
+  a.href = '/export/frequencies/all';
+  a.download = 'hfdl_frequencies.jsonl';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 // ---- Boot ------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -684,6 +693,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(tickUptime, 1_000);
 
   document.getElementById('btn-export-freqs').addEventListener('click', exportActiveFrequencies);
+  document.getElementById('btn-export-all-freqs').addEventListener('click', exportAllFrequencies);
 
   // Re-render planes table when switching to that tab
   document.addEventListener('tabchange', (e) => {

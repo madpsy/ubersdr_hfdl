@@ -73,9 +73,13 @@ done
 # Fetch HFDL frequency list
 # ---------------------------------------------------------------------------
 
-echo "Fetching HFDL frequency list..."
-curl -fsSL "${FREQ_JSONL_URL}" -o "${FREQ_FILE}"
-echo "Saved ${FREQ_FILE}"
+if [[ -f "${FREQ_FILE}" ]]; then
+    echo "${FREQ_FILE} already exists — skipping download"
+else
+    echo "Fetching HFDL frequency list..."
+    curl -fsSL "${FREQ_JSONL_URL}" -o "${FREQ_FILE}"
+    echo "Saved ${FREQ_FILE}"
+fi
 
 # ---------------------------------------------------------------------------
 # Patch compose file: add bind mount and FREQ_URL if not already present

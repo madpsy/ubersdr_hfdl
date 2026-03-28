@@ -126,7 +126,14 @@
     <section id="tab-instances" class="tab-panel">
       <div id="instances-content">
         <div id="instances-toolbar">
-          <button id="btn-export-freqs" class="toolbar-btn">⬇ Export Active Frequencies</button>
+          <div class="toolbar-item">
+            <button id="btn-export-freqs" class="toolbar-btn">⬇ Export Active Frequencies</button>
+            <p class="toolbar-desc">Downloads a <code>hfdl_frequencies.jsonl</code> file where only frequencies that have received at least one message during this session are marked as enabled.</p>
+          </div>
+          <div class="toolbar-item">
+            <button id="btn-export-all-freqs" class="toolbar-btn">⬇ Export All Frequencies</button>
+            <p class="toolbar-desc">Downloads a <code>hfdl_frequencies.jsonl</code> file with every frequency marked as enabled, regardless of observed activity.</p>
+          </div>
         </div>
         <div class="instances-extra-args" id="instances-extra-args"></div>
         <div id="instances-windows"></div>
