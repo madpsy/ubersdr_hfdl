@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -28,6 +29,8 @@ type instanceInfo struct {
 //	GET /events         — Server-Sent Events stream of typed events:
 //	                        {"type":"message","data":{...}}
 //	                        {"type":"position","data":{...}}
+const defaultFreqURL = "https://ubersdr.org/hfdl/hfdl_frequencies.jsonl"
+
 func startWebServer(port int, staticDir string, store *statsStore, groups []freqGroup, disabledFreqs []int, extraArgs []string, freqURL string) {
 	mux := http.NewServeMux()
 
@@ -128,6 +131,28 @@ func startWebServer(port int, staticDir string, store *statsStore, groups []freq
 		w.Header().Set("Content-Disposition", `attachment; filename="hfdl_frequencies.jsonl"`)
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Write(data) //nolint:errcheck
+	})
+
+	// /export/frequencies/latest — proxy the upstream JSONL directly to the client
+	mux.HandleFunc("/export/frequencies/latest", func(w http.ResponseWriter, r *http.Request) {
+		upstream := freqURL
+		if upstream == "" {
+			upstream = defaultFreqURL
+		}
+		resp, err := http.Get(upstream) //nolint:noctx
+		if err != nil {
+			http.Error(w, "failed to fetch upstream frequency list: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			http.Error(w, fmt.Sprintf("upstream returned HTTP %d", resp.StatusCode), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", `attachment; filename="hfdl_frequencies.jsonl"`)
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		io.Copy(w, resp.Body) //nolint:errcheck
 	})
 
 	// /groundstations — full ground station list with frequencies and last-heard times
