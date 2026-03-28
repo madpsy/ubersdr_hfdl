@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -88,9 +89,20 @@ func startWebServer(port int, staticDir string, store *statsStore, groups []freq
 	// writeAndExit writes data to the frequency file and signals the launcher
 	// to exit so Docker restarts it with the updated file.
 	writeAndExit := func(w http.ResponseWriter, data []byte) {
+		// Ensure the parent directory exists (handles cases where the path was
+		// configured but the directory was never created on the host).
+		if dir := filepath.Dir(freqFilePath); dir != "" {
+			if err := os.MkdirAll(dir, 0755); err != nil { //nolint:gosec
+				log.Printf("web: apply: failed to create directory %s: %v", dir, err)
+				msg, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("failed to create config directory: %v", err)}) //nolint:errcheck
+				http.Error(w, string(msg), http.StatusInternalServerError)
+				return
+			}
+		}
 		if err := os.WriteFile(freqFilePath, data, 0644); err != nil { //nolint:gosec
 			log.Printf("web: apply: failed to write %s: %v", freqFilePath, err)
-			http.Error(w, `{"error":"failed to write frequency file"}`, http.StatusInternalServerError)
+			msg, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("failed to write config file: %v", err)}) //nolint:errcheck
+			http.Error(w, string(msg), http.StatusInternalServerError)
 			return
 		}
 		log.Printf("web: apply: wrote %d bytes to %s — signalling exit for restart", len(data), freqFilePath)

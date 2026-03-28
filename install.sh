@@ -80,6 +80,9 @@ else
     curl -fsSL "${FREQ_JSONL_URL}" -o "${FREQ_FILE}"
     echo "Saved ${FREQ_FILE}"
 fi
+# Ensure the frequency file is writable by the container's hfdl user (which
+# runs as a system UID that differs from the host user who downloaded the file).
+chmod 666 "${FREQ_FILE}"
 
 # ---------------------------------------------------------------------------
 # Patch compose file: add bind mount and FREQ_URL if not already present
