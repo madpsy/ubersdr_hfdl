@@ -9,7 +9,9 @@ set -euo pipefail
 INSTALL_DIR="${HOME}/ubersdr/hfdl"
 
 cd "${INSTALL_DIR}"
-echo "Restarting hfdl_launcher..."
-docker compose restart
+echo "Stopping hfdl_launcher..."
+docker compose down
+echo "Starting hfdl_launcher..."
+docker compose up -d --remove-orphans
 echo "Done."
 echo "  View logs : docker compose logs -f"
