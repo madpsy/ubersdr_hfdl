@@ -180,11 +180,17 @@ function renderLegend() {
       const gsId = parseInt(row.dataset.gsId, 10);
       if (selectedGS === gsId) {
         deselectGS();
+        renderLegend();
       } else {
         selectGS(gsId);
-        // Pan to the GS marker if it exists
+        renderLegend();
+        // Pan to the GS marker if it exists and trigger the same behaviour as
+        // clicking the marker directly (fire a synthetic click so the popup opens)
         const marker = gsMarkers[gsId];
-        if (marker) hfdlMap.panTo(marker.getLatLng());
+        if (marker) {
+          hfdlMap.panTo(marker.getLatLng());
+          marker.fire('click');
+        }
       }
     });
   });

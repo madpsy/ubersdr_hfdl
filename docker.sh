@@ -65,6 +65,10 @@ push() {
     build
     echo "Pushing $IMAGE..."
     docker push "$IMAGE"
+    echo "Committing and pushing git repository..."
+    git add -A
+    git diff --cached --quiet || git commit -m "Release $IMAGE"
+    git push
 }
 
 run_image() {
