@@ -112,7 +112,13 @@ COPY static/ /usr/local/share/hfdl_launcher/static/
 # Copy entrypoint script (translates env vars to hfdl_launcher flags)
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
-RUN ldconfig && chmod +x /usr/local/bin/entrypoint.sh
+# Create the default IQ recordings directory and ensure the hfdl user owns it.
+# Users can volume-mount a host directory over /iq_recordings and set
+# IQ_RECORD_DIR=/iq_recordings to persist WAV files on the host.
+RUN ldconfig && \
+    chmod +x /usr/local/bin/entrypoint.sh && \
+    mkdir -p /iq_recordings && \
+    chown hfdl:hfdl /iq_recordings
 
 USER hfdl
 

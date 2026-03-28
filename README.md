@@ -230,6 +230,8 @@ flags are available as env vars:
 | `WEB_STATIC` | `-web-static` | `/usr/local/share/hfdl_launcher/static` |
 | `DRY_RUN` | `-dry-run` | set to `1` to enable |
 | `EXTRA_ARGS` | *(after `--`)* | extra dumphfdl args |
+| `IQ_RECORD_DIR` | `-iq-record-dir` | *(disabled if unset)* |
+| `IQ_RECORD_SECONDS` | `-iq-record-seconds` | `30` |
 
 > **Note:** There is no `IQ_MODE` variable.  The bandwidth (`iq48`, `iq96`, or
 > `iq192`) is chosen automatically per window based on how tightly the HFDL
@@ -312,6 +314,43 @@ docker run --rm \
   -e SYSTEM_TABLE=/data/systable.conf \
   -v /etc/dumphfdl:/data:ro \
   hfdl_launcher:latest
+```
+
+#### Record 30 seconds of raw IQ data to WAV files on the host
+
+When `IQ_RECORD_DIR` is set, the launcher records the first N seconds of the
+raw CS16 IQ stream from **each** frequency window as a standard PCM WAV file
+(2-channel, 16-bit, at the window's sample rate).  Files are written to the
+directory inside the container that you volume-mount from the host.
+
+```bash
+docker run --rm \
+  --name ubersdr_hfdl \
+  -e UBERSDR_URL=http://172.20.0.1:8080 \
+  -e IQ_RECORD_DIR=/iq_recordings \
+  -e IQ_RECORD_SECONDS=30 \
+  -v /home/user/iq_recordings:/iq_recordings \
+  hfdl_launcher:latest
+```
+
+Files are named `iq_<centerKHz>kHz_<iqMode>_<UTC-timestamp>.wav`, for example:
+
+```
+iq_10063kHz_iq48_20260328T141500Z.wav
+iq_11184kHz_iq96_20260328T141500Z.wav
+```
+
+After recording completes the IQ stream continues to flow into `dumphfdl`
+uninterrupted — recording does **not** stop decoding.
+
+Using `docker-compose.yml`, uncomment the relevant lines:
+
+```yaml
+environment:
+  IQ_RECORD_DIR: "/iq_recordings"
+  IQ_RECORD_SECONDS: "30"
+volumes:
+  - "./iq_recordings:/iq_recordings"
 ```
 
 #### Dry-run to preview what would be launched

@@ -11,17 +11,19 @@
 //
 //	hfdl_launcher [flags] [-- dumphfdl-extra-args...]
 //
-//	  -url          UberSDR base URL (default: http://172.20.0.1:8080)
-//	  -pass         Bypass password (optional)
-//	  -ubersdr-iq   Path to ubersdr_iq binary (default: ubersdr_iq)
-//	  -dumphfdl     Path to dumphfdl binary (default: dumphfdl)
-//	  -freq-url     URL for HFDL frequency JSONL
-//	  -station      Comma-separated ground station IDs to monitor (default: all)
-//	  -system-table Path to dumphfdl system table file (optional)
-//	  -config-pass  Password required to use the Apply endpoints (optional)
-//	  -dry-run      Print planned instances without launching
-//	  -web-port     Port for the web statistics server (default: 8080, 0 = disabled)
-//	  -web-static   Path to static web files directory
+//	  -url               UberSDR base URL (default: http://172.20.0.1:8080)
+//	  -pass              Bypass password (optional)
+//	  -ubersdr-iq        Path to ubersdr_iq binary (default: ubersdr_iq)
+//	  -dumphfdl          Path to dumphfdl binary (default: dumphfdl)
+//	  -freq-url          URL for HFDL frequency JSONL
+//	  -station           Comma-separated ground station IDs to monitor (default: all)
+//	  -system-table      Path to dumphfdl system table file (optional)
+//	  -config-pass       Password required to use the Apply endpoints (optional)
+//	  -dry-run           Print planned instances without launching
+//	  -web-port          Port for the web statistics server (default: 8080, 0 = disabled)
+//	  -web-static        Path to static web files directory
+//	  -iq-record-dir     Directory to write IQ WAV recordings (enables recording when set)
+//	  -iq-record-seconds Duration of each IQ recording in seconds (default: 30)
 
 package main
 
@@ -42,19 +44,21 @@ import (
 func printUsage(w io.Writer) {
 	fmt.Fprintf(w, "Usage: hfdl_launcher [flags] [-- dumphfdl-args...]\n\n")                                                 //nolint:errcheck
 	fmt.Fprintf(w, "Flags:\n")                                                                                               //nolint:errcheck
-	fmt.Fprintf(w, "  -url          UberSDR base URL (default: http://172.20.0.1:8080)\n")                                   //nolint:errcheck
-	fmt.Fprintf(w, "  -pass         Bypass password (optional)\n")                                                           //nolint:errcheck
-	fmt.Fprintf(w, "  -ubersdr-iq   Path to ubersdr_iq binary (default: ubersdr_iq)\n")                                      //nolint:errcheck
-	fmt.Fprintf(w, "  -dumphfdl     Path to dumphfdl binary (default: dumphfdl)\n")                                          //nolint:errcheck
-	fmt.Fprintf(w, "  -freq-url     URL for HFDL frequency JSONL\n")                                                         //nolint:errcheck
-	fmt.Fprintf(w, "                (default: https://ubersdr.org/hfdl/hfdl_frequencies.jsonl)\n")                           //nolint:errcheck
-	fmt.Fprintf(w, "  -station      Comma-separated ground station IDs to monitor (default: all)\n")                         //nolint:errcheck
-	fmt.Fprintf(w, "  -system-table Path to dumphfdl system table file (optional)\n")                                        //nolint:errcheck
-	fmt.Fprintf(w, "  -config-pass  Password to protect the Apply frequency endpoints (optional)\n")                         //nolint:errcheck
-	fmt.Fprintf(w, "  -dry-run      Print planned instances without launching\n")                                            //nolint:errcheck
-	fmt.Fprintf(w, "  -web-port     Port for the web statistics server (default: 6090, 0 = disabled)\n")                     //nolint:errcheck
-	fmt.Fprintf(w, "  -web-static   Path to static web files directory\n")                                                   //nolint:errcheck
-	fmt.Fprintf(w, "                (default: /usr/local/share/hfdl_launcher/static)\n\n")                                   //nolint:errcheck
+	fmt.Fprintf(w, "  -url               UberSDR base URL (default: http://172.20.0.1:8080)\n")                              //nolint:errcheck
+	fmt.Fprintf(w, "  -pass              Bypass password (optional)\n")                                                      //nolint:errcheck
+	fmt.Fprintf(w, "  -ubersdr-iq        Path to ubersdr_iq binary (default: ubersdr_iq)\n")                                 //nolint:errcheck
+	fmt.Fprintf(w, "  -dumphfdl          Path to dumphfdl binary (default: dumphfdl)\n")                                     //nolint:errcheck
+	fmt.Fprintf(w, "  -freq-url          URL for HFDL frequency JSONL\n")                                                    //nolint:errcheck
+	fmt.Fprintf(w, "                     (default: https://ubersdr.org/hfdl/hfdl_frequencies.jsonl)\n")                      //nolint:errcheck
+	fmt.Fprintf(w, "  -station           Comma-separated ground station IDs to monitor (default: all)\n")                    //nolint:errcheck
+	fmt.Fprintf(w, "  -system-table      Path to dumphfdl system table file (optional)\n")                                   //nolint:errcheck
+	fmt.Fprintf(w, "  -config-pass       Password to protect the Apply frequency endpoints (optional)\n")                    //nolint:errcheck
+	fmt.Fprintf(w, "  -dry-run           Print planned instances without launching\n")                                       //nolint:errcheck
+	fmt.Fprintf(w, "  -web-port          Port for the web statistics server (default: 6090, 0 = disabled)\n")                //nolint:errcheck
+	fmt.Fprintf(w, "  -web-static        Path to static web files directory\n")                                              //nolint:errcheck
+	fmt.Fprintf(w, "                     (default: /usr/local/share/hfdl_launcher/static)\n")                                //nolint:errcheck
+	fmt.Fprintf(w, "  -iq-record-dir     Directory to write IQ WAV recordings (enables recording when set)\n")               //nolint:errcheck
+	fmt.Fprintf(w, "  -iq-record-seconds Duration of each IQ recording in seconds (default: 30)\n\n")                        //nolint:errcheck
 	fmt.Fprintf(w, "Extra dumphfdl arguments:\n")                                                                            //nolint:errcheck
 	fmt.Fprintf(w, "  Any arguments after -- are passed verbatim to every dumphfdl instance.\n")                             //nolint:errcheck
 	fmt.Fprintf(w, "  Note: --output decoded:json:file:path=- is always injected automatically.\n\n")                        //nolint:errcheck
@@ -138,18 +142,30 @@ func run(cfg config) error {
 		go startWebServer(cfg.webPort, cfg.webStaticDir, store, groups, fetched.DisabledFreqs, cfg.extraHFDLArgs, cfg.freqURL, cfg.configPass, exitCh)
 	}
 
+	// Ensure IQ recording directory exists when recording is enabled.
+	if cfg.iqRecordDir != "" {
+		if err := os.MkdirAll(cfg.iqRecordDir, 0o755); err != nil {
+			log.Printf("warning: cannot create IQ recording directory %s: %v — recording disabled", cfg.iqRecordDir, err)
+			cfg.iqRecordDir = ""
+		} else {
+			log.Printf("IQ recording enabled: directory=%s duration=%ds", cfg.iqRecordDir, cfg.iqRecordSeconds)
+		}
+	}
+
 	// Build and start instances.
 	instances := make([]*instance, len(groups))
 	for i, g := range groups {
 		instances[i] = &instance{
-			group:         g,
-			ubersdrPath:   cfg.ubersdrPath,
-			dumphfdlPath:  cfg.dumphfdlPath,
-			ubersdrURL:    cfg.ubersdrURL,
-			password:      cfg.password,
-			systemTable:   cfg.systemTable,
-			extraHFDLArgs: cfg.extraHFDLArgs,
-			jsonCh:        jsonCh,
+			group:           g,
+			ubersdrPath:     cfg.ubersdrPath,
+			dumphfdlPath:    cfg.dumphfdlPath,
+			ubersdrURL:      cfg.ubersdrURL,
+			password:        cfg.password,
+			systemTable:     cfg.systemTable,
+			extraHFDLArgs:   cfg.extraHFDLArgs,
+			jsonCh:          jsonCh,
+			iqRecordDir:     cfg.iqRecordDir,
+			iqRecordSeconds: cfg.iqRecordSeconds,
 		}
 	}
 
@@ -181,33 +197,37 @@ func run(cfg config) error {
 
 // config holds all launcher configuration.
 type config struct {
-	ubersdrURL    string
-	password      string
-	ubersdrPath   string
-	dumphfdlPath  string
-	freqURL       string
-	systemTable   string
-	configPass    string
-	stationIDs    map[int]bool
-	extraHFDLArgs []string
-	dryRun        bool
-	webPort       int
-	webStaticDir  string
+	ubersdrURL      string
+	password        string
+	ubersdrPath     string
+	dumphfdlPath    string
+	freqURL         string
+	systemTable     string
+	configPass      string
+	stationIDs      map[int]bool
+	extraHFDLArgs   []string
+	dryRun          bool
+	webPort         int
+	webStaticDir    string
+	iqRecordDir     string
+	iqRecordSeconds int
 }
 
 func main() {
 	var (
-		ubersdrURL   = flag.String("url", "http://172.20.0.1:8080", "UberSDR base URL")
-		password     = flag.String("pass", "", "Bypass password")
-		ubersdrPath  = flag.String("ubersdr-iq", "ubersdr_iq", "Path to ubersdr_iq binary")
-		dumphfdlPath = flag.String("dumphfdl", "dumphfdl", "Path to dumphfdl binary")
-		freqURL      = flag.String("freq-url", "https://ubersdr.org/hfdl/hfdl_frequencies.jsonl", "HFDL frequency list URL")
-		stationFlag  = flag.String("station", "", "Comma-separated ground station IDs (default: all)")
-		systemTable  = flag.String("system-table", "", "Path to dumphfdl system table file")
-		configPass   = flag.String("config-pass", "", "Password to protect the Apply frequency endpoints")
-		dryRun       = flag.Bool("dry-run", false, "Print planned instances without launching")
-		webPort      = flag.Int("web-port", 6090, "Port for the web statistics server (0 = disabled)")
-		webStatic    = flag.String("web-static", "/usr/local/share/hfdl_launcher/static", "Path to static web files directory")
+		ubersdrURL      = flag.String("url", "http://172.20.0.1:8080", "UberSDR base URL")
+		password        = flag.String("pass", "", "Bypass password")
+		ubersdrPath     = flag.String("ubersdr-iq", "ubersdr_iq", "Path to ubersdr_iq binary")
+		dumphfdlPath    = flag.String("dumphfdl", "dumphfdl", "Path to dumphfdl binary")
+		freqURL         = flag.String("freq-url", "https://ubersdr.org/hfdl/hfdl_frequencies.jsonl", "HFDL frequency list URL")
+		stationFlag     = flag.String("station", "", "Comma-separated ground station IDs (default: all)")
+		systemTable     = flag.String("system-table", "", "Path to dumphfdl system table file")
+		configPass      = flag.String("config-pass", "", "Password to protect the Apply frequency endpoints")
+		dryRun          = flag.Bool("dry-run", false, "Print planned instances without launching")
+		webPort         = flag.Int("web-port", 6090, "Port for the web statistics server (0 = disabled)")
+		webStatic       = flag.String("web-static", "/usr/local/share/hfdl_launcher/static", "Path to static web files directory")
+		iqRecordDir     = flag.String("iq-record-dir", "", "Directory to write IQ WAV recordings (enables recording when set)")
+		iqRecordSeconds = flag.Int("iq-record-seconds", 30, "Duration of each IQ recording in seconds")
 	)
 	flag.Usage = func() { printUsage(os.Stderr) }
 	flag.Parse()
@@ -229,18 +249,20 @@ func main() {
 	}
 
 	if err := run(config{
-		ubersdrURL:    *ubersdrURL,
-		password:      *password,
-		ubersdrPath:   *ubersdrPath,
-		dumphfdlPath:  *dumphfdlPath,
-		freqURL:       *freqURL,
-		systemTable:   *systemTable,
-		configPass:    *configPass,
-		stationIDs:    stationIDs,
-		extraHFDLArgs: flag.Args(),
-		dryRun:        *dryRun,
-		webPort:       *webPort,
-		webStaticDir:  *webStatic,
+		ubersdrURL:      *ubersdrURL,
+		password:        *password,
+		ubersdrPath:     *ubersdrPath,
+		dumphfdlPath:    *dumphfdlPath,
+		freqURL:         *freqURL,
+		systemTable:     *systemTable,
+		configPass:      *configPass,
+		stationIDs:      stationIDs,
+		extraHFDLArgs:   flag.Args(),
+		dryRun:          *dryRun,
+		webPort:         *webPort,
+		webStaticDir:    *webStatic,
+		iqRecordDir:     *iqRecordDir,
+		iqRecordSeconds: *iqRecordSeconds,
 	}); err != nil {
 		log.Fatalf("error: %v", err)
 	}

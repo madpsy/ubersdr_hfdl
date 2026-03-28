@@ -16,3 +16,14 @@ services:
       # CONFIG_PASS: ""
       # SILENT: "0"
       # DRY_RUN: "0"
+      #
+      # IQ recording — records 30 s of raw IQ data per window as a WAV file.
+      # Set IQ_RECORD_DIR to the path inside the container that is volume-mounted
+      # to a host directory (see the volumes section below).
+      # IQ_RECORD_DIR: "/iq_recordings"
+      # IQ_RECORD_SECONDS: "30"
+    # volumes:
+    #   # Mount a host directory to persist IQ WAV recordings.
+    #   # The left-hand side is the path on the host; the right-hand side must
+    #   # match IQ_RECORD_DIR above.
+    #   - "./iq_recordings:/iq_recordings"

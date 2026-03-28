@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -14,14 +15,16 @@ import (
 
 // instance represents one running ubersdr_iq | dumphfdl pipeline.
 type instance struct {
-	group         freqGroup
-	ubersdrPath   string
-	dumphfdlPath  string
-	ubersdrURL    string
-	password      string
-	systemTable   string
-	extraHFDLArgs []string
-	jsonCh        chan<- string // fan-in channel for JSON lines from dumphfdl stdout
+	group           freqGroup
+	ubersdrPath     string
+	dumphfdlPath    string
+	ubersdrURL      string
+	password        string
+	systemTable     string
+	extraHFDLArgs   []string
+	jsonCh          chan<- string // fan-in channel for JSON lines from dumphfdl stdout
+	iqRecordDir     string        // directory for IQ WAV recordings; empty = disabled
+	iqRecordSeconds int           // duration of each recording in seconds (default 30)
 
 	mu       sync.Mutex
 	running  bool
@@ -77,6 +80,9 @@ func (inst *instance) buildArgs() (iqArgs []string, hfdlArgs []string) {
 // start launches the pipeline.  ubersdr_iq stdout → dumphfdl stdin.
 // dumphfdl stdout is captured line-by-line and forwarded to the fan-in channel.
 // Both processes share the current process's stderr for log output.
+//
+// When iqRecordDir is non-empty, the raw IQ stream is teed into a WAV file for
+// iqRecordSeconds seconds before being forwarded to dumphfdl unmodified.
 func (inst *instance) start() error {
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
@@ -102,29 +108,73 @@ func (inst *instance) start() error {
 		return fmt.Errorf("dumphfdl stdout pipe: %w", err)
 	}
 
-	// Connect ubersdr_iq stdout → dumphfdl stdin via pipe
+	// Obtain ubersdr_iq stdout pipe
 	iqPipe, err := iqCmd.StdoutPipe()
 	if err != nil {
 		hfdlStdout.Close()
 		return fmt.Errorf("ubersdr_iq stdout pipe: %w", err)
 	}
-	hfdlCmd.Stdin = iqPipe
 
-	// Start dumphfdl first so it is ready to receive
-	if err := hfdlCmd.Start(); err != nil {
-		iqPipe.Close()
-		hfdlStdout.Close()
-		return fmt.Errorf("start dumphfdl: %w", err)
+	if inst.iqRecordDir != "" {
+		// IQ recording enabled: interpose a pipe between ubersdr_iq and dumphfdl.
+		// recordIQ tees the stream to a WAV file for iqRecordSeconds, then passes
+		// the remainder through to dumphfdl stdin unmodified.
+		pr, pw := io.Pipe()
+		hfdlCmd.Stdin = pr
+
+		// Start dumphfdl first so it is ready to receive
+		if err := hfdlCmd.Start(); err != nil {
+			iqPipe.Close()
+			hfdlStdout.Close()
+			pr.Close()
+			pw.Close()
+			return fmt.Errorf("start dumphfdl: %w", err)
+		}
+
+		// Start ubersdr_iq
+		if err := iqCmd.Start(); err != nil {
+			hfdlCmd.Process.Kill()
+			hfdlStdout.Close()
+			pr.Close()
+			pw.Close()
+			return fmt.Errorf("start ubersdr_iq: %w", err)
+		}
+
+		inst.running = true
+
+		secs := inst.iqRecordSeconds
+		if secs <= 0 {
+			secs = 30
+		}
+		info := iqModes[inst.group.iqMode]
+		go func() {
+			// recordIQ reads from iqPipe, writes WAV for secs, then copies the
+			// rest to pw (dumphfdl stdin).  Closing pw signals EOF to dumphfdl.
+			recordIQ(iqPipe, pw, inst.iqRecordDir,
+				inst.group.centerKHz, inst.group.iqMode,
+				info.sampleRateHz, time.Duration(secs)*time.Second)
+			pw.Close()
+		}()
+	} else {
+		// No recording: connect ubersdr_iq stdout directly to dumphfdl stdin.
+		hfdlCmd.Stdin = iqPipe
+
+		// Start dumphfdl first so it is ready to receive
+		if err := hfdlCmd.Start(); err != nil {
+			iqPipe.Close()
+			hfdlStdout.Close()
+			return fmt.Errorf("start dumphfdl: %w", err)
+		}
+
+		// Start ubersdr_iq
+		if err := iqCmd.Start(); err != nil {
+			hfdlCmd.Process.Kill()
+			hfdlStdout.Close()
+			return fmt.Errorf("start ubersdr_iq: %w", err)
+		}
+
+		inst.running = true
 	}
-
-	// Start ubersdr_iq
-	if err := iqCmd.Start(); err != nil {
-		hfdlCmd.Process.Kill()
-		hfdlStdout.Close()
-		return fmt.Errorf("start ubersdr_iq: %w", err)
-	}
-
-	inst.running = true
 
 	// Read dumphfdl stdout line-by-line and forward to the fan-in channel.
 	go func() {
