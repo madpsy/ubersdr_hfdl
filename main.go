@@ -391,8 +391,8 @@ func (c *client) runOnce() (reconnect bool) {
 			case <-ticker.C:
 				b := totalBytes.Swap(0)
 				p := totalPackets.Swap(0)
-				fmt.Fprintf(os.Stderr, "throughput: %d packets, %.1f KB/s (%.2f MB in 30s)\n",
-					p, float64(b)/30/1024, float64(b)/1024/1024)
+				fmt.Fprintf(os.Stderr, "throughput [%d Hz / %s]: %d packets, %.1f KB/s (%.2f MB in 30s)\n",
+					c.frequency, c.iqMode, p, float64(b)/30/1024, float64(b)/1024/1024)
 			}
 		}
 	}()
