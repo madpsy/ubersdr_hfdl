@@ -37,8 +37,59 @@ By default the launcher fetches the full HFDL frequency list from
 frequency.  Over time you may find that many of those frequencies are never
 active from your location — monitoring them wastes IQ bandwidth and CPU.
 
-The **⚙ Instances** tab in the dashboard provides three export buttons to help
-you tune this:
+The **⚙ Instances** tab in the dashboard lets you apply a new frequency
+configuration directly from the browser, or export a file to apply manually.
+
+### Apply from the UI (recommended)
+
+The easiest way to update the frequency list is directly from the dashboard —
+no SSH or file copying required.  To enable this you need to set a password in
+your `docker-compose.yml`.
+
+**1. Set `CONFIG_PASS` in `~/ubersdr/hfdl/docker-compose.yml`:**
+
+```yaml
+environment:
+  CONFIG_PASS: "choose-a-strong-password-here"
+```
+
+> **Security note:** `CONFIG_PASS` protects the Apply endpoints from
+> unauthorised use.  Choose a strong, unique password — anyone who knows it can
+> overwrite your frequency file and trigger a service restart.
+
+**2. Restart the container to pick up the new setting:**
+
+```bash
+cd ~/ubersdr/hfdl
+./restart.sh
+```
+
+**3. Run for at least 24 hours** with the default (all frequencies enabled) so
+the launcher has a chance to hear activity across different times of day and
+propagation conditions.
+
+**4. Open the dashboard → ⚙ Instances tab** and click one of the Apply buttons:
+
+| Button | What it does |
+|--------|-------------|
+| **Apply Active Frequencies** | Overwrites the frequency file with only the frequencies that received at least one message during this session, then restarts the service |
+| **Apply All Frequencies** | Overwrites the frequency file with every frequency marked as enabled (equivalent to the upstream default), then restarts the service |
+| **Apply Latest Frequencies** | Fetches the current list from ubersdr.org, overwrites the frequency file, then restarts the service |
+
+You will be prompted for the `CONFIG_PASS` password.  On success the service
+restarts automatically and the page reloads after 5 seconds.
+
+> **Tip:** If propagation changes and you start missing stations, use
+> **Apply Latest Frequencies** to reset back to the full upstream list in one click.
+
+---
+
+### Export and apply manually (alternative)
+
+If you prefer not to set a password, you can export the frequency file from the
+dashboard and apply it manually.
+
+The **⚙ Instances** tab provides three export buttons:
 
 | Button | What it produces |
 |--------|-----------------|
@@ -46,22 +97,16 @@ you tune this:
 | **Export All Frequencies** | A `hfdl_frequencies.jsonl` where **every** frequency is marked as enabled (equivalent to the upstream default) |
 | **Export Latest Frequencies** | The current `hfdl_frequencies.jsonl` fetched directly from ubersdr.org, as-is |
 
-### Recommended workflow
+1. **Run for at least 24 hours**, then click **Export Active Frequencies** to
+   download the file.
 
-1. **Run for at least 24 hours** with the default (all frequencies enabled) so
-   the launcher has a chance to hear activity across different times of day and
-   propagation conditions.
-
-2. Open the dashboard, go to the **⚙ Instances** tab, and click
-   **Export Active Frequencies**.
-
-3. Replace the frequency file that `install.sh` already placed on the host:
+2. Copy it to the host frequency file:
 
    ```bash
    cp ~/Downloads/hfdl_frequencies.jsonl ~/ubersdr/hfdl/hfdl_frequencies.jsonl
    ```
 
-4. Restart the container to pick up the new file:
+3. Restart the container:
 
    ```bash
    cd ~/ubersdr/hfdl
@@ -70,10 +115,6 @@ you tune this:
 
    The launcher will now only open IQ windows for the frequencies you have
    actually heard, reducing CPU and bandwidth usage.
-
-> **Tip:** If propagation changes and you start missing stations, click
-> **Export All Frequencies** or **Export Latest Frequencies** to reset back to
-> the full list, replace the file, and run `./restart.sh` again.
 
 ---
 
@@ -184,6 +225,7 @@ flags are available as env vars:
 | `STATION` | `-station` | *(all)* |
 | `SYSTEM_TABLE` | `-system-table` | |
 | `FREQ_URL` | `-freq-url` | *(upstream default)* |
+| `CONFIG_PASS` | `-config-pass` | *(Apply endpoints disabled if unset)* |
 | `WEB_PORT` | `-web-port` | `6090` (set to `0` to disable) |
 | `WEB_STATIC` | `-web-static` | `/usr/local/share/hfdl_launcher/static` |
 | `DRY_RUN` | `-dry-run` | set to `1` to enable |
@@ -424,6 +466,7 @@ independently sized.
 | `-freq-url` | `https://ubersdr.org/hfdl/hfdl_frequencies.jsonl` | HFDL frequency list URL |
 | `-station` | *(all)* | Comma-separated ground station IDs to monitor |
 | `-system-table` | | Path to dumphfdl system table file |
+| `-config-pass` | | Password to protect the Apply frequency endpoints (required to use Apply in the UI) |
 | `-web-port` | `6090` | Port for the web statistics server (`0` = disabled) |
 | `-web-static` | `/usr/local/share/hfdl_launcher/static` | Path to static web files directory |
 | `-dry-run` | | Print planned instances and commands without launching |
