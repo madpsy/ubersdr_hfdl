@@ -544,8 +544,7 @@ td.empty {
   padding: 8px 10px;
   min-width: 180px;
   max-width: 240px;
-  max-height: 320px;
-  overflow-y: auto;
+  overflow: hidden;
   font-size: 12px;
   color: var(--text);
   pointer-events: auto;

@@ -55,7 +55,7 @@ function gsColorFor(gsId) {
 }
 
 // ---- Recent positions history ----------------------------------------------
-const MAX_HISTORY = 20;
+const MAX_HISTORY = 10;
 const posHistory  = []; // [{key, label, gsId, time, posCount}] newest-first
 
 let historyControl = null;
@@ -239,6 +239,7 @@ let showGSMarkers = true;
 let showAcLabels  = false;
 let showPlanes    = true;
 let showArcLayer  = true;
+let autoFit       = true;
 
 // ---- Coverage arc layer ----------------------------------------------------
 let arcLayer = null; // L.polygon drawn from receiver showing bearing/distance coverage
@@ -772,6 +773,10 @@ function initLayerControl() {
       `<label class="map-layer-ctrl__row">` +
         `<input type="checkbox" id="lyr-arc" checked>` +
         `<span>Coverage arc</span>` +
+      `</label>` +
+      `<label class="map-layer-ctrl__row">` +
+        `<input type="checkbox" id="lyr-autofit" checked>` +
+        `<span>Auto fit</span>` +
       `</label>`;
 
     div.querySelector('#lyr-gs').addEventListener('change', e => {
@@ -789,10 +794,25 @@ function initLayerControl() {
     div.querySelector('#lyr-arc').addEventListener('change', e => {
       toggleArcLayer(e.target.checked);
     });
+    div.querySelector('#lyr-autofit').addEventListener('change', e => {
+      autoFit = e.target.checked;
+      if (autoFit) fitToVisibleAircraft();
+    });
 
     return div;
   };
   layerControl.addTo(hfdlMap);
+}
+
+/** Fit the map view to all currently visible aircraft (respects band filter). */
+function fitToVisibleAircraft() {
+  if (!hfdlMap) return;
+  const latlngs = [];
+  for (const [key, marker] of Object.entries(aircraftMarkers)) {
+    if (hfdlMap.hasLayer(marker)) latlngs.push(marker.getLatLng());
+  }
+  if (latlngs.length === 0) return;
+  hfdlMap.fitBounds(L.latLngBounds(latlngs), { padding: [40, 40], maxZoom: 8 });
 }
 
 // ---- Receiver marker -------------------------------------------------------
@@ -1239,6 +1259,9 @@ function upsertMarker(ac, fromSSE = false) {
   renderLegend();
   renderFreqBandControl();
   renderDistanceStats();
+
+  // Auto-fit: only trigger on live SSE updates to avoid fitting on every render
+  if (fromSSE && autoFit) fitToVisibleAircraft();
 }
 
 // ---- Selection / track -----------------------------------------------------
