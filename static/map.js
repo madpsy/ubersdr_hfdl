@@ -969,7 +969,7 @@ function renderDistanceStats() {
 
   distStatsControl._div.innerHTML = html;
 
-  // Make callsign labels clickable — select the aircraft and pan to it
+  // Make callsign labels clickable (select + pan) and hoverable (open popup)
   distStatsControl._div.querySelectorAll('.map-dist-stats__ac--link').forEach(el => {
     L.DomEvent.on(el, 'click', (e) => {
       L.DomEvent.stopPropagation(e);
@@ -978,6 +978,26 @@ function renderDistanceStats() {
       selectAircraft(key);
       const marker = aircraftMarkers[key];
       if (marker) hfdlMap.panTo(marker.getLatLng());
+    });
+
+    L.DomEvent.on(el, 'mouseover', () => {
+      const key = el.dataset.key;
+      if (!key) return;
+      const marker = aircraftMarkers[key];
+      const ac = aircraftData[key];
+      if (marker && ac) {
+        marker.setPopupContent(buildPopup(ac));
+        showRxLine(ac.lat, ac.lon);
+        marker.openPopup();
+      }
+    });
+
+    L.DomEvent.on(el, 'mouseout', () => {
+      const key = el.dataset.key;
+      if (!key) return;
+      const marker = aircraftMarkers[key];
+      if (marker) marker.closePopup();
+      hideRxLine();
     });
   });
 
