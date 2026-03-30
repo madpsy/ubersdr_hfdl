@@ -549,6 +549,39 @@ function renderInstances(data) {
       </div>
       <span class="freq-overview__bar-label">${pct}% of enabled frequencies active this session</span>
     </div>`;
+
+    // Show a contextual hint based on uptime and active-frequency percentage.
+    const uptimeSecs = startTimeSec ? Math.max(0, Math.floor(Date.now() / 1000) - startTimeSec) : 0;
+    if (uptimeSecs <= 86400) {
+      // Not yet 24 hours — tell the user to come back later
+      overviewHtml += `<div class="freq-overview__notice freq-overview__notice--info">
+        <span class="freq-overview__notice-icon">ℹ</span>
+        <span class="freq-overview__notice-text">
+          Once the service has been running for <strong>24 hours</strong>, optimisation suggestions will be displayed here.
+        </span>
+      </div>`;
+    } else if (pct < 70) {
+      // > 24 h uptime and fewer than 70% active — suggest optimising
+      overviewHtml += `<div class="freq-overview__notice freq-overview__notice--warn">
+        <span class="freq-overview__notice-icon">⚠</span>
+        <span class="freq-overview__notice-text">
+          Only <strong>${pct}%</strong> of enabled frequencies have been active after
+          more than 24 hours of uptime. Running
+          <strong>↺ Apply Active Frequencies</strong> could reduce unnecessary CPU usage
+          by disabling the ${totalInactive.toLocaleString()} inactive
+          frequenc${totalInactive === 1 ? 'y' : 'ies'}.
+        </span>
+      </div>`;
+    } else {
+      // > 24 h uptime and ≥ 70% active — looking efficient
+      overviewHtml += `<div class="freq-overview__notice freq-overview__notice--ok">
+        <span class="freq-overview__notice-icon">✓</span>
+        <span class="freq-overview__notice-text">
+          <strong>${pct}%</strong> of enabled frequencies are active — your frequency
+          configuration looks efficient enough. No changes are needed.
+        </span>
+      </div>`;
+    }
   }
   overviewHtml += `</div>`;
 
