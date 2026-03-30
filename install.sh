@@ -94,9 +94,14 @@ done
 if [[ -f "${FREQ_FILE}" ]]; then
     echo "${FREQ_FILE} already exists — skipping download"
 else
-    echo "Fetching HFDL frequency list..."
-    curl -fsSL "${FREQ_JSONL_URL}" -o "${FREQ_FILE}"
-    echo "Saved ${FREQ_FILE}"
+    echo "Fetching HFDL frequency list from ${FREQ_JSONL_URL}..."
+    if curl -fsSL --max-time 15 "${FREQ_JSONL_URL}" -o "${FREQ_FILE}"; then
+        echo "Saved ${FREQ_FILE} from ${FREQ_JSONL_URL}"
+    else
+        echo "WARNING: could not reach ${FREQ_JSONL_URL} — falling back to bundled repo copy"
+        curl -fsSL "${REPO_RAW}/hfdl_frequencies.jsonl" -o "${FREQ_FILE}"
+        echo "Saved ${FREQ_FILE} from repo fallback"
+    fi
 fi
 # Ensure the frequency file is writable by the container's hfdl user (which
 # runs as a system UID that differs from the host user who downloaded the file).
