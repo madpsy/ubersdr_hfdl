@@ -998,6 +998,31 @@ td.empty {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.map-freqband-ctrl__live-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  user-select: none;
+}
+
+.map-freqband-ctrl__live-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 11px;
+  height: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .map-freqband-ctrl__empty {

@@ -424,7 +424,7 @@ function tickLiveActivity() {
 }
 
 function renderLiveActivity() {
-  if (!hfdlMap) return;
+  if (!hfdlMap || !liveActivityControl) return;
 
   // Aggregate counts per band from the current window
   const bandCounts = new Map(); // band → count
@@ -458,17 +458,6 @@ function renderLiveActivity() {
   }
   html += `</div>`;
 
-  if (!liveActivityControl) {
-    liveActivityControl = L.control({ position: 'topright' });
-    liveActivityControl.onAdd = function () {
-      const div = L.DomUtil.create('div', 'map-live-activity-wrap');
-      L.DomEvent.disableClickPropagation(div);
-      L.DomEvent.disableScrollPropagation(div);
-      return div;
-    };
-    liveActivityControl.addTo(hfdlMap);
-  }
-
   liveActivityControl.getContainer().innerHTML = html;
 }
 
@@ -478,6 +467,7 @@ function renderLiveActivity() {
 const freqBandFilter = {};
 
 let freqBandControl = null;
+let showLiveActivity = true; // toggled by the "Live" checkbox in the freq-band header
 
 /** Return the MHz band integer for a kHz frequency value. */
 function freqBand(freqKhz) {
@@ -515,7 +505,15 @@ function renderFreqBandControl() {
   // Build HTML
   const sorted = [...bands].sort((a, b) => a - b);
 
-  let html = `<div class="map-freqband-ctrl__title">Freq Bands</div>`;
+  const liveChecked = showLiveActivity ? 'checked' : '';
+  let html =
+    `<div class="map-freqband-ctrl__title">` +
+      `Bands` +
+      `<label class="map-freqband-ctrl__live-toggle">` +
+        `<input type="checkbox" id="freqband-live-cb" ${liveChecked}>` +
+        `<span>Live</span>` +
+      `</label>` +
+    `</div>`;
   if (sorted.length === 0) {
     html += `<div class="map-freqband-ctrl__empty">No aircraft yet</div>`;
   } else {
@@ -546,6 +544,12 @@ function renderFreqBandControl() {
       // Single delegated change listener for checkboxes — set up once on the
       // stable container so it is never re-attached on each render call.
       div.addEventListener('change', (e) => {
+        if (e.target.id === 'freqband-live-cb') {
+          showLiveActivity = e.target.checked;
+          const wrap = liveActivityControl && liveActivityControl.getContainer();
+          if (wrap) wrap.style.display = showLiveActivity ? '' : 'none';
+          return;
+        }
         if (!e.target.classList.contains('freqband-cb')) return;
         const band = parseInt(e.target.dataset.band, 10);
         freqBandFilter[band] = e.target.checked;
@@ -565,6 +569,20 @@ function renderFreqBandControl() {
       return div;
     };
     freqBandControl.addTo(hfdlMap);
+
+    // Add the live-activity control immediately after so Leaflet places it
+    // below the freq-band panel in the topright corner.
+    if (!liveActivityControl) {
+      liveActivityControl = L.control({ position: 'topright' });
+      liveActivityControl.onAdd = function () {
+        const div = L.DomUtil.create('div', 'map-live-activity-wrap');
+        L.DomEvent.disableClickPropagation(div);
+        L.DomEvent.disableScrollPropagation(div);
+        return div;
+      };
+      liveActivityControl.addTo(hfdlMap);
+      renderLiveActivity();
+    }
   }
 
   // Only update the HTML — the delegated listeners on the container persist.
@@ -1256,8 +1274,9 @@ function initMap() {
   setInterval(updateGreyline, 60_000);
   initLayerControl();
 
-  // Start the live-activity ticker — renders the overlay and prunes old events
-  renderLiveActivity();
+  // Start the live-activity ticker — the control itself is added to the map
+  // the first time renderFreqBandControl() creates freqBandControl, so that
+  // Leaflet stacks it below the freq-band panel in the topright corner.
   setInterval(tickLiveActivity, ACTIVITY_TICK_MS);
 }
 
