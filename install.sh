@@ -80,7 +80,7 @@ fi
 # Fetch helper scripts
 # ---------------------------------------------------------------------------
 
-for script in update.sh start.sh stop.sh restart.sh; do
+for script in update.sh start.sh stop.sh restart.sh get-password.sh; do
     echo "Fetching ${script}..."
     curl -fsSL "${REPO_RAW}/${script}" -o "${script}"
     chmod +x "${script}"
@@ -166,6 +166,7 @@ echo "  Stop       : ./stop.sh"
 echo "  Start      : ./start.sh"
 echo "  Restart    : ./restart.sh"
 echo "  Update     : ./update.sh"
+echo "  Password   : ./get-password.sh"
 echo ""
 if [[ "${PASS_IS_NEW}" == "1" ]]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
