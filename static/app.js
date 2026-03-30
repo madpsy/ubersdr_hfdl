@@ -54,6 +54,12 @@ let heardFreqsByGS = {};
 // Instances tab.
 let activeFreqsKHz = new Set();
 
+// ---- Per-frequency message counts ------------------------------------------
+// Map of freq_khz → total message count across all ground stations.
+// Populated from /stats frequencies[].gs_stats on each refresh and
+// incremented by SSE message events. Used to show counts in the Instances tab.
+const freqMsgCounts = new Map();
+
 // ---- Destination-frequency lookup ------------------------------------------
 // Built from /groundstations dst_freqs_khz on each refresh.
 // Keys are gs_id (number), values are Set<freq_khz> of frequencies where this
@@ -243,12 +249,22 @@ function loadStats() {
           // Any entry in the frequencies array means at least one message was
           // received on that frequency, regardless of source type.
           activeFreqsKHz.add(freq.freq_khz);
-          if (!freq.gs_stats) continue;
-          for (const gsIdStr of Object.keys(freq.gs_stats)) {
-            const gsId = parseInt(gsIdStr, 10);
-            if (!heardFreqsByGS[gsId]) heardFreqsByGS[gsId] = new Set();
-            heardFreqsByGS[gsId].add(freq.freq_khz);
+          // Sum msg_count across all GS for this frequency
+          let total = 0;
+          if (freq.gs_stats) {
+            for (const gs of Object.values(freq.gs_stats)) {
+              total += gs.msg_count || 0;
+            }
+            for (const gsIdStr of Object.keys(freq.gs_stats)) {
+              const gsId = parseInt(gsIdStr, 10);
+              if (!heardFreqsByGS[gsId]) heardFreqsByGS[gsId] = new Set();
+              heardFreqsByGS[gsId].add(freq.freq_khz);
+            }
           }
+          // Only update if the authoritative count from /stats is higher
+          // (SSE increments may have run ahead; take the max).
+          const prev = freqMsgCounts.get(freq.freq_khz) || 0;
+          freqMsgCounts.set(freq.freq_khz, Math.max(prev, total));
         }
       }
       // Always fetch ground stations after stats so heardFreqsByGS is ready
@@ -300,6 +316,7 @@ function handleSSEEvent(raw) {
     // Mark this frequency as active immediately and re-render instances chips
     if (data.freq_khz) {
       activeFreqsKHz.add(data.freq_khz);
+      freqMsgCounts.set(data.freq_khz, (freqMsgCounts.get(data.freq_khz) || 0) + 1);
       if (cachedInstancesData) renderInstances(cachedInstancesData);
     }
 
@@ -628,8 +645,13 @@ function renderInstances(data) {
     const w = windows[i];
     const freqs = (w.freqs_khz || []).map(f => {
       const active = activeFreqsKHz.has(f);
-      return `<span class="instances-freq${active ? ' instances-freq--active' : ''}">${f.toLocaleString()}</span>`;
+      const count = freqMsgCounts.get(f) || 0;
+      const countLabel = ` (${count.toLocaleString()})`;
+      return `<span class="instances-freq${active ? ' instances-freq--active' : ''}">${f.toLocaleString()}${countLabel}</span>`;
     }).join('');
+
+    // Sum message counts for all frequencies in this window
+    const windowTotal = (w.freqs_khz || []).reduce((sum, f) => sum + (freqMsgCounts.get(f) || 0), 0);
 
     // Store started_at so the 1-second ticker can update the uptime span live.
     instanceStartedAt[i] = (w.running && w.started_at) ? w.started_at : 0;
@@ -659,7 +681,7 @@ function renderInstances(data) {
     html +=
       `<div class="instances-card">` +
         `<div class="instances-card__header">` +
-          `<span class="instances-card__centre">${w.center_khz.toLocaleString()} kHz</span>` +
+          `<span class="instances-card__centre">${w.center_khz.toLocaleString()} kHz (${windowTotal.toLocaleString()})</span>` +
           `<span class="instances-card__mode">${esc(w.iq_mode)} · ${w.bandwidth_khz} kHz BW</span>` +
         `</div>` +
         `<div class="instances-card__health">` +
