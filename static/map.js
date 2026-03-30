@@ -11,6 +11,10 @@ const aircraftData    = {}; // key → latest ac object (for icon rebuilds)
 
 // ---- Receiver marker -------------------------------------------------------
 let receiverMarker = null;
+let receiverLatLng = null; // set by placeReceiverMarker(), used for range lines
+
+// ---- Receiver range line ---------------------------------------------------
+let rxRangeLine = null; // L.polyline drawn on aircraft hover, removed on mouseout
 
 // ---- Selection state -------------------------------------------------------
 let selectedKey  = null;    // currently selected aircraft key, or null
@@ -319,8 +323,39 @@ function loadGSMarkers() {
           if (showGSMarkers) m.addTo(hfdlMap);
           gsMarkers[gs.gs_id] = m;
 
-          m.on('mouseover', () => m.openPopup());
-          m.on('mouseout',  () => m.closePopup());
+          m.on('mouseover', () => {
+            // Rebuild popup with live distance (receiverLatLng may have arrived
+            // after the marker was first created).
+            const distKm = distanceToReceiverKm(gs.lat, gs.lon);
+            const distLine = distKm !== null
+              ? `<br>Distance: ${fmtKm(distKm)}`
+              : '';
+            const lastHeardStr2 = gs.last_heard
+              ? new Date(gs.last_heard * 1000).toUTCString()
+              : 'Never';
+            const freqLine2 = gs.heard_freqs_khz && gs.heard_freqs_khz.length
+              ? `<br>Heard on: ${gs.heard_freqs_khz.map(f => (f / 1000).toFixed(3) + ' MHz').join(', ')}`
+              : '';
+            const sigLine2 = gs.last_sig_level
+              ? `<br>Last signal: ${gs.last_sig_level.toFixed(1)} dBFS`
+              : '';
+            m.setPopupContent(
+              `<div class="gs-popup">` +
+              `<strong>${esc(gs.location)}</strong><br>` +
+              `GS ID: ${gs.gs_id}<br>` +
+              `Last heard: ${lastHeardStr2}` +
+              sigLine2 +
+              freqLine2 +
+              distLine +
+              `</div>`
+            );
+            m.openPopup();
+            showRxLine(gs.lat, gs.lon);
+          });
+          m.on('mouseout', () => {
+            m.closePopup();
+            hideRxLine();
+          });
           // Click: select this GS (toggle off if already selected)
           m.on('click', (e) => {
             L.DomEvent.stopPropagation(e);
@@ -504,6 +539,89 @@ function initLayerControl() {
 
 // ---- Receiver marker -------------------------------------------------------
 
+// ---- Geodesic (great-circle) line helpers ----------------------------------
+
+const DEG = Math.PI / 180;
+const RAD = 180 / Math.PI;
+
+/**
+ * Interpolate N+1 points along the great-circle arc between two lat/lon pairs.
+ * Returns an array of [lat, lon] suitable for L.polyline.
+ */
+function greatCirclePoints(lat1, lon1, lat2, lon2, steps) {
+  const φ1 = lat1 * DEG, λ1 = lon1 * DEG;
+  const φ2 = lat2 * DEG, λ2 = lon2 * DEG;
+
+  const dφ = φ2 - φ1;
+  const dλ = λ2 - λ1;
+  const a  = Math.sin(dφ / 2) ** 2 +
+             Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
+  const d  = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); // central angle
+
+  if (d < 1e-10) return [[lat1, lon1]]; // same point
+
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const f  = i / steps;
+    const A  = Math.sin((1 - f) * d) / Math.sin(d);
+    const B  = Math.sin(f * d)       / Math.sin(d);
+    const x  = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ2);
+    const y  = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ2);
+    const z  = A * Math.sin(φ1)                 + B * Math.sin(φ2);
+    const φi = Math.atan2(z, Math.sqrt(x * x + y * y));
+    const λi = Math.atan2(y, x);
+    pts.push([φi * RAD, λi * RAD]);
+  }
+  return pts;
+}
+
+/** Draw a dashed great-circle line from the receiver to [lat, lon]. */
+function showRxLine(lat, lon) {
+  if (!hfdlMap || !receiverLatLng) return;
+  const pts = greatCirclePoints(
+    receiverLatLng[0], receiverLatLng[1], lat, lon, 64
+  );
+  if (rxRangeLine) {
+    rxRangeLine.setLatLngs(pts);
+  } else {
+    rxRangeLine = L.polyline(pts, {
+      color:     '#58a6ff',
+      weight:    1.5,
+      opacity:   0.7,
+      dashArray: '6 5',
+      interactive: false,
+    }).addTo(hfdlMap);
+  }
+}
+
+/** Remove the receiver range line. */
+function hideRxLine() {
+  if (rxRangeLine) {
+    rxRangeLine.remove();
+    rxRangeLine = null;
+  }
+}
+
+/**
+ * Return the great-circle distance in km between two lat/lon pairs.
+ * Returns null if receiverLatLng is not yet set.
+ */
+function distanceToReceiverKm(lat, lon) {
+  if (!receiverLatLng) return null;
+  const R   = 6371;
+  const φ1  = receiverLatLng[0] * DEG, φ2 = lat * DEG;
+  const dφ  = (lat - receiverLatLng[0]) * DEG;
+  const dλ  = (lon - receiverLatLng[1]) * DEG;
+  const a   = Math.sin(dφ / 2) ** 2 +
+              Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Format a km distance as "1,234 km" or "987 km". */
+function fmtKm(km) {
+  return km.toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' km';
+}
+
 /**
  * Place (or update) the SDR receiver marker on the map.
  * Called from app.js after a successful /receiver/description fetch.
@@ -513,6 +631,9 @@ function initLayerControl() {
 function placeReceiverMarker(info) {
   if (!hfdlMap) return;
   if (!info.lat || !info.lon) return;
+
+  // Store for use by showRxLine()
+  receiverLatLng = [info.lat, info.lon];
 
   const icon = L.divIcon({
     className: '',
@@ -605,6 +726,10 @@ function buildPopup(ac) {
   const sigHtml = ac.sig_level != null && ac.sig_level !== 0
     ? `Signal: <span style="${sigClass(ac.sig_level)}">${ac.sig_level.toFixed(1)} dBFS</span><br>`
     : '';
+  const distKm = ac.lat && ac.lon ? distanceToReceiverKm(ac.lat, ac.lon) : null;
+  const distHtml = distKm !== null
+    ? `Distance: ${fmtKm(distKm)}<br>`
+    : '';
   return `
     <div class="ac-popup">
       <strong>${esc(label)}</strong><br>
@@ -614,6 +739,7 @@ function buildPopup(ac) {
       Freq: ${ac.freq_khz ? ac.freq_khz.toLocaleString() + ' kHz' : '—'}<br>
       ${gsName ? `Via: ${esc(gsName)}<br>` : ''}
       ${sigHtml}
+      ${distHtml}
       ${ac.msg_count ? `Messages: ${ac.msg_count.toLocaleString()}<br>` : ''}
       Last seen: ${lastSeen}
     </div>`;
@@ -643,8 +769,19 @@ function upsertMarker(ac, fromSSE = false) {
       .bindPopup(popup, { autoPan: false });
     if (showPlanes) marker.addTo(hfdlMap);
 
-    marker.on('mouseover', () => marker.openPopup());
-    marker.on('mouseout',  () => marker.closePopup());
+    marker.on('mouseover', () => {
+      const live = aircraftData[ac.key];
+      if (live) {
+        // Refresh popup so distance reflects current receiverLatLng
+        marker.setPopupContent(buildPopup(live));
+        showRxLine(live.lat, live.lon);
+      }
+      marker.openPopup();
+    });
+    marker.on('mouseout', () => {
+      marker.closePopup();
+      hideRxLine();
+    });
     marker.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
       selectAircraft(ac.key);
