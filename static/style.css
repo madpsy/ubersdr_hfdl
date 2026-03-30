@@ -1142,22 +1142,22 @@ td.empty {
 }
 
 .rx-marker__icon {
-  font-size: 26px;
+  font-size: 20px;
   line-height: 1;
-  filter: drop-shadow(0 0 4px rgba(88, 166, 255, 0.8));
+  filter: drop-shadow(0 0 3px rgba(88, 166, 255, 0.7));
 }
 
 .rx-marker__label {
-  margin-top: 2px;
-  font-size: 11px;
+  margin-top: 1px;
+  font-size: 10px;
   font-weight: 700;
   color: #58a6ff;
   background: rgba(13, 17, 23, 0.82);
   border: 1px solid rgba(88, 166, 255, 0.5);
   border-radius: 3px;
-  padding: 1px 4px;
+  padding: 0px 3px;
   white-space: nowrap;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   pointer-events: none;
 }
 

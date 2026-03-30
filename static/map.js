@@ -520,9 +520,9 @@ function placeReceiverMarker(info) {
           `<span class="rx-marker__icon">🏠</span>` +
           `<div class="rx-marker__label">${esc(info.callsign)}</div>` +
           `</div>`,
-    iconSize:   [48, 48],
-    iconAnchor: [24, 24],
-    popupAnchor: [0, -28],
+    iconSize:   [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -18],
   });
 
   const popup =
