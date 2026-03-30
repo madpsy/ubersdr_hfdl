@@ -9,6 +9,9 @@ let hfdlMap = null;
 const aircraftMarkers = {}; // key → L.marker
 const aircraftData    = {}; // key → latest ac object (for icon rebuilds)
 
+// ---- Receiver marker -------------------------------------------------------
+let receiverMarker = null;
+
 // ---- Selection state -------------------------------------------------------
 let selectedKey  = null;    // currently selected aircraft key, or null
 let selectedGS   = null;    // currently selected GS id (number), or null
@@ -497,6 +500,49 @@ function initLayerControl() {
     return div;
   };
   layerControl.addTo(hfdlMap);
+}
+
+// ---- Receiver marker -------------------------------------------------------
+
+/**
+ * Place (or update) the SDR receiver marker on the map.
+ * Called from app.js after a successful /receiver/description fetch.
+ *
+ * @param {object} info  { callsign, antenna, name, lat, lon }
+ */
+function placeReceiverMarker(info) {
+  if (!hfdlMap) return;
+  if (!info.lat || !info.lon) return;
+
+  const icon = L.divIcon({
+    className: '',
+    html: `<div class="rx-marker" title="${esc(info.callsign)}">` +
+          `<span class="rx-marker__icon">🏠</span>` +
+          `<div class="rx-marker__label">${esc(info.callsign)}</div>` +
+          `</div>`,
+    iconSize:   [48, 48],
+    iconAnchor: [24, 24],
+    popupAnchor: [0, -28],
+  });
+
+  const popup =
+    `<div class="rx-popup">` +
+    `<strong>${esc(info.callsign)}</strong><br>` +
+    `${info.name   ? `<span class="rx-popup__name">${esc(info.name)}</span><br>` : ''}` +
+    `${info.antenna ? `Antenna: ${esc(info.antenna)}<br>` : ''}` +
+    `Lat: ${info.lat.toFixed(5)}, Lon: ${info.lon.toFixed(5)}` +
+    `</div>`;
+
+  if (receiverMarker) {
+    receiverMarker.setLatLng([info.lat, info.lon]).setIcon(icon).setPopupContent(popup);
+  } else {
+    receiverMarker = L.marker([info.lat, info.lon], { icon, zIndexOffset: 500 })
+      .bindPopup(popup, { autoPan: false })
+      .addTo(hfdlMap);
+
+    receiverMarker.on('mouseover', () => receiverMarker.openPopup());
+    receiverMarker.on('mouseout',  () => receiverMarker.closePopup());
+  }
 }
 
 function initMap() {

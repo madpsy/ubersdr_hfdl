@@ -49,7 +49,7 @@ type applyRequest struct {
 //	POST /apply/frequencies/latest  — Fetch latest from ubersdr.org, write to file, then exit
 const defaultFreqURL = "https://ubersdr.org/hfdl/hfdl_frequencies.jsonl"
 
-func startWebServer(port int, staticDir string, store *statsStore, groups []freqGroup, disabledFreqs []int, extraArgs []string, freqURL string, configPass string, exitCh chan<- struct{}) {
+func startWebServer(port int, staticDir string, store *statsStore, groups []freqGroup, disabledFreqs []int, extraArgs []string, freqURL string, configPass string, ubersdrURL string, exitCh chan<- struct{}) {
 	mux := http.NewServeMux()
 
 	// Derive the writable file path from a file:// freqURL, if applicable.
@@ -286,6 +286,58 @@ func startWebServer(port int, staticDir string, store *statsStore, groups []freq
 		}
 
 		writeAndExit(w, data)
+	})
+
+	// /receiver/description — proxy /api/description from the UberSDR backend,
+	// extracting callsign, antenna, name, lat and lon for the map receiver marker.
+	mux.HandleFunc("/receiver/description", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		target := strings.TrimRight(ubersdrURL, "/") + "/api/description"
+		resp, err := http.Get(target) //nolint:noctx
+		if err != nil {
+			http.Error(w, `{"error":"failed to reach UberSDR"}`, http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			http.Error(w, fmt.Sprintf(`{"error":"UberSDR returned HTTP %d"}`, resp.StatusCode), http.StatusBadGateway)
+			return
+		}
+
+		// Decode only the fields we need so we don't expose the full payload.
+		var full struct {
+			Receiver struct {
+				Callsign string `json:"callsign"`
+				Antenna  string `json:"antenna"`
+				Name     string `json:"name"`
+				GPS      struct {
+					Lat float64 `json:"lat"`
+					Lon float64 `json:"lon"`
+				} `json:"gps"`
+			} `json:"receiver"`
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		if err != nil {
+			http.Error(w, `{"error":"failed to read UberSDR response"}`, http.StatusBadGateway)
+			return
+		}
+		if err := json.Unmarshal(body, &full); err != nil {
+			http.Error(w, `{"error":"failed to parse UberSDR response"}`, http.StatusBadGateway)
+			return
+		}
+
+		out := map[string]interface{}{
+			"callsign": full.Receiver.Callsign,
+			"antenna":  full.Receiver.Antenna,
+			"name":     full.Receiver.Name,
+			"lat":      full.Receiver.GPS.Lat,
+			"lon":      full.Receiver.GPS.Lon,
+		}
+		if err := json.NewEncoder(w).Encode(out); err != nil {
+			log.Printf("web: /receiver/description encode error: %v", err)
+		}
 	})
 
 	// /groundstations — full ground station list with frequencies and last-heard times

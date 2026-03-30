@@ -801,6 +801,28 @@ function openApplyModal(endpoint, title, desc) {
   passEl.addEventListener('keydown', onKeydown);
 }
 
+// ---- Receiver description --------------------------------------------------
+
+/**
+ * Fetch /receiver/description (which proxies /api/description on the UberSDR
+ * backend) and, on success, hand the result to map.js to place the receiver
+ * marker.  Failures are silently ignored so the rest of the UI is unaffected.
+ */
+function fetchReceiverDescription() {
+  fetch('/receiver/description')
+    .then(r => {
+      if (!r.ok) return null;
+      return r.json();
+    })
+    .then(info => {
+      if (!info) return;
+      if (typeof placeReceiverMarker === 'function') {
+        placeReceiverMarker(info);
+      }
+    })
+    .catch(err => console.warn('receiver description fetch error:', err));
+}
+
 // ---- Boot ------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -852,4 +874,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (typeof initMap === 'function') {
     initMap();
   }
+
+  // Fetch receiver info and place the SDR receiver marker on the map.
+  fetchReceiverDescription();
 });

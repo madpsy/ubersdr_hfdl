@@ -139,7 +139,7 @@ func run(cfg config) error {
 
 	// Web server.
 	if cfg.webPort > 0 {
-		go startWebServer(cfg.webPort, cfg.webStaticDir, store, groups, fetched.DisabledFreqs, cfg.extraHFDLArgs, cfg.freqURL, cfg.configPass, exitCh)
+		go startWebServer(cfg.webPort, cfg.webStaticDir, store, groups, fetched.DisabledFreqs, cfg.extraHFDLArgs, cfg.freqURL, cfg.configPass, cfg.ubersdrURL, exitCh)
 	}
 
 	// Ensure IQ recording directory exists when recording is enabled.

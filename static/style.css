@@ -1131,6 +1131,52 @@ td.empty {
   font-style: italic;
 }
 
+/* ---- Receiver marker (SDR location) ---- */
+
+.rx-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  position: relative;
+}
+
+.rx-marker__icon {
+  font-size: 26px;
+  line-height: 1;
+  filter: drop-shadow(0 0 4px rgba(88, 166, 255, 0.8));
+}
+
+.rx-marker__label {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #58a6ff;
+  background: rgba(13, 17, 23, 0.82);
+  border: 1px solid rgba(88, 166, 255, 0.5);
+  border-radius: 3px;
+  padding: 1px 4px;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.rx-popup {
+  font-size: 13px;
+  line-height: 1.6;
+  min-width: 160px;
+}
+
+.rx-popup strong {
+  font-size: 14px;
+  color: #58a6ff;
+}
+
+.rx-popup__name {
+  color: #c9d1d9;
+  font-style: italic;
+}
+
 /* ---- Responsive ---- */
 
 @media (max-width: 900px) {
