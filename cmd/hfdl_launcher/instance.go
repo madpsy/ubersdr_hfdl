@@ -26,9 +26,12 @@ type instance struct {
 	iqRecordDir     string        // directory for IQ WAV recordings; empty = disabled
 	iqRecordSeconds int           // duration of each recording in seconds (default 30)
 
-	mu       sync.Mutex
-	running  bool
-	stopping bool
+	mu            sync.Mutex
+	running       bool
+	stopping      bool
+	startedAt     time.Time // when the current run started (zero = not running)
+	lastHealthyAt time.Time // last time the pipeline was confirmed running (zero = never)
+	reconnections int       // number of automatic restarts since launch
 }
 
 // buildArgs returns the argument lists for ubersdr_iq and dumphfdl.
@@ -141,6 +144,8 @@ func (inst *instance) start() error {
 		}
 
 		inst.running = true
+		inst.startedAt = time.Now()
+		inst.lastHealthyAt = time.Now()
 
 		secs := inst.iqRecordSeconds
 		if secs <= 0 {
@@ -174,6 +179,8 @@ func (inst *instance) start() error {
 		}
 
 		inst.running = true
+		inst.startedAt = time.Now()
+		inst.lastHealthyAt = time.Now()
 	}
 
 	// Read dumphfdl stdout line-by-line and forward to the fan-in channel.
@@ -204,6 +211,7 @@ func (inst *instance) start() error {
 
 		inst.mu.Lock()
 		inst.running = false
+		inst.startedAt = time.Time{} // zero = not running
 		shouldRestart := !inst.stopping
 		inst.mu.Unlock()
 
@@ -218,6 +226,9 @@ func (inst *instance) start() error {
 			time.Sleep(10 * time.Second)
 			inst.mu.Lock()
 			stillStopping := inst.stopping
+			if !stillStopping {
+				inst.reconnections++
+			}
 			inst.mu.Unlock()
 			if !stillStopping {
 				if err := inst.start(); err != nil {

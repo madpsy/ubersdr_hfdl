@@ -13,10 +13,14 @@ import (
 
 // instanceInfo is the JSON representation of one running IQ window.
 type instanceInfo struct {
-	CenterKHz    int    `json:"center_khz"`
-	IQMode       string `json:"iq_mode"`
-	BandwidthKHz int    `json:"bandwidth_khz"`
-	FreqsKHz     []int  `json:"freqs_khz"`
+	CenterKHz     int    `json:"center_khz"`
+	IQMode        string `json:"iq_mode"`
+	BandwidthKHz  int    `json:"bandwidth_khz"`
+	FreqsKHz      []int  `json:"freqs_khz"`
+	Running       bool   `json:"running"`
+	Reconnections int    `json:"reconnections"`
+	StartedAt     int64  `json:"started_at"`      // unix seconds; 0 = not currently running
+	LastHealthyAt int64  `json:"last_healthy_at"` // unix seconds; 0 = never ran
 }
 
 // applyRequest is the JSON body expected by POST /apply/* endpoints.
@@ -49,7 +53,7 @@ type applyRequest struct {
 //	POST /apply/frequencies/latest  — Fetch latest from ubersdr.org, write to file, then exit
 const defaultFreqURL = "https://ubersdr.org/hfdl/hfdl_frequencies.jsonl"
 
-func startWebServer(port int, staticDir string, store *statsStore, groups []freqGroup, disabledFreqs []int, extraArgs []string, freqURL string, configPass string, ubersdrURL string, exitCh chan<- struct{}) {
+func startWebServer(port int, staticDir string, store *statsStore, instances []*instance, groups []freqGroup, disabledFreqs []int, extraArgs []string, freqURL string, configPass string, ubersdrURL string, exitCh chan<- struct{}) {
 	mux := http.NewServeMux()
 
 	// Derive the writable file path from a file:// freqURL, if applicable.
@@ -153,7 +157,7 @@ func startWebServer(port int, staticDir string, store *statsStore, groups []freq
 		}
 	})
 
-	// /instances — IQ windows, extra args, and apply_enabled flag
+	// /instances — IQ windows, extra args, apply_enabled flag, and per-instance health
 	mux.HandleFunc("/instances", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -163,12 +167,27 @@ func startWebServer(port int, staticDir string, store *statsStore, groups []freq
 			if info, ok := iqModes[g.iqMode]; ok {
 				bw = info.bandwidthKHz
 			}
-			windows[i] = instanceInfo{
+			info := instanceInfo{
 				CenterKHz:    g.centerKHz,
 				IQMode:       g.iqMode,
 				BandwidthKHz: bw,
 				FreqsKHz:     g.freqsKHz,
 			}
+			// Attach live health data from the corresponding instance (if available).
+			if i < len(instances) {
+				inst := instances[i]
+				inst.mu.Lock()
+				info.Running = inst.running
+				info.Reconnections = inst.reconnections
+				if !inst.startedAt.IsZero() {
+					info.StartedAt = inst.startedAt.Unix()
+				}
+				if !inst.lastHealthyAt.IsZero() {
+					info.LastHealthyAt = inst.lastHealthyAt.Unix()
+				}
+				inst.mu.Unlock()
+			}
+			windows[i] = info
 		}
 		resp := map[string]interface{}{
 			"extra_args":     extraArgs,

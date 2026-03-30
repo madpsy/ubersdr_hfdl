@@ -466,6 +466,17 @@ function loadInstances() {
     .catch(err => console.warn('instances fetch error:', err));
 }
 
+// fmtUptimeShort formats elapsed seconds as "Xh Ym Zs", omitting leading zeros.
+function fmtUptimeShort(secs) {
+  if (secs < 0) secs = 0;
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
 function renderInstances(data) {
   const extraEl = document.getElementById('instances-extra-args');
   const windowsEl = document.getElementById('instances-windows');
@@ -591,6 +602,8 @@ function renderInstances(data) {
     return;
   }
 
+  const nowSec = Math.floor(Date.now() / 1000);
+
   let html = overviewHtml + `<div class="instances-section-title">IQ Windows (${windows.length})</div>`;
   html += `<div class="instances-grid">`;
   for (const w of windows) {
@@ -598,11 +611,38 @@ function renderInstances(data) {
       const active = activeFreqsKHz.has(f);
       return `<span class="instances-freq${active ? ' instances-freq--active' : ''}">${f.toLocaleString()}</span>`;
     }).join('');
+
+    // Health status badge
+    let statusHtml;
+    if (w.running) {
+      const uptimeSecs = w.started_at ? nowSec - w.started_at : 0;
+      statusHtml =
+        `<span class="inst-status inst-status--running">● Running</span>` +
+        `<span class="inst-uptime">up ${fmtUptimeShort(uptimeSecs)}</span>`;
+    } else if (w.last_healthy_at) {
+      statusHtml =
+        `<span class="inst-status inst-status--stopped">✗ Stopped</span>` +
+        `<span class="inst-uptime inst-uptime--dim">last healthy ${fmtDateTime(w.last_healthy_at)}</span>`;
+    } else {
+      statusHtml = `<span class="inst-status inst-status--stopped">✗ Not started</span>`;
+    }
+
+    // Reconnection badge (only shown when > 0)
+    const reconnectHtml = w.reconnections > 0
+      ? `<span class="inst-reconnect-badge" title="Pipeline has restarted ${w.reconnections} time${w.reconnections === 1 ? '' : 's'}">` +
+          `⚠ ${w.reconnections} reconnection${w.reconnections === 1 ? '' : 's'}` +
+        `</span>`
+      : '';
+
     html +=
       `<div class="instances-card">` +
         `<div class="instances-card__header">` +
           `<span class="instances-card__centre">${w.center_khz.toLocaleString()} kHz</span>` +
           `<span class="instances-card__mode">${esc(w.iq_mode)} · ${w.bandwidth_khz} kHz BW</span>` +
+        `</div>` +
+        `<div class="instances-card__health">` +
+          `<div class="inst-status-row">${statusHtml}</div>` +
+          (reconnectHtml ? `<div class="inst-reconnect-row">${reconnectHtml}</div>` : '') +
         `</div>` +
         `<div class="instances-card__freqs">${freqs}</div>` +
       `</div>`;
@@ -939,6 +979,8 @@ document.addEventListener('DOMContentLoaded', () => {
   loadAircraftTab();
   loadSignalHistory();
   setInterval(loadSignalHistory, 60_000);
+  // Poll /instances every 10 s so health status (running, uptime, reconnections) stays live.
+  setInterval(loadInstances, 10_000);
   connectSSE();
   startPeriodicRefresh(15000);
   setInterval(tickUptime, 1_000);

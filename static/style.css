@@ -1229,6 +1229,68 @@ td.empty {
   gap: 4px;
 }
 
+/* ---- Instance health status ---- */
+
+.instances-card__health {
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inst-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.inst-reconnect-row {
+  display: flex;
+  align-items: center;
+}
+
+.inst-status {
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+.inst-status--running {
+  background: rgba(63, 185, 80, 0.15);
+  border: 1px solid rgba(63, 185, 80, 0.4);
+  color: #3fb950;
+}
+
+.inst-status--stopped {
+  background: rgba(248, 81, 73, 0.12);
+  border: 1px solid rgba(248, 81, 73, 0.35);
+  color: #f85149;
+}
+
+.inst-uptime {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.inst-uptime--dim {
+  opacity: 0.75;
+}
+
+.inst-reconnect-badge {
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(210, 153, 34, 0.15);
+  border: 1px solid rgba(210, 153, 34, 0.4);
+  color: #d29922;
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
 .instances-freq {
   background: rgba(88, 166, 255, 0.1);
   border: 1px solid rgba(88, 166, 255, 0.25);

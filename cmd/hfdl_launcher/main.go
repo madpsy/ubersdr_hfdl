@@ -137,11 +137,6 @@ func run(cfg config) error {
 	// restarts the container and re-reads the updated frequency file.
 	exitCh := make(chan struct{}, 1)
 
-	// Web server.
-	if cfg.webPort > 0 {
-		go startWebServer(cfg.webPort, cfg.webStaticDir, store, groups, fetched.DisabledFreqs, cfg.extraHFDLArgs, cfg.freqURL, cfg.configPass, cfg.ubersdrURL, exitCh)
-	}
-
 	// Ensure IQ recording directory exists when recording is enabled.
 	if cfg.iqRecordDir != "" {
 		if err := os.MkdirAll(cfg.iqRecordDir, 0o755); err != nil {
@@ -152,7 +147,7 @@ func run(cfg config) error {
 		}
 	}
 
-	// Build and start instances.
+	// Build instances (not yet started).
 	instances := make([]*instance, len(groups))
 	for i, g := range groups {
 		instances[i] = &instance{
@@ -167,6 +162,12 @@ func run(cfg config) error {
 			iqRecordDir:     cfg.iqRecordDir,
 			iqRecordSeconds: cfg.iqRecordSeconds,
 		}
+	}
+
+	// Web server — started after instances are built so the handler can read
+	// live health fields from each *instance at request time.
+	if cfg.webPort > 0 {
+		go startWebServer(cfg.webPort, cfg.webStaticDir, store, instances, groups, fetched.DisabledFreqs, cfg.extraHFDLArgs, cfg.freqURL, cfg.configPass, cfg.ubersdrURL, exitCh)
 	}
 
 	for _, inst := range instances {
