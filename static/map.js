@@ -282,8 +282,8 @@ function destinationPoint(lat, lon, radiusKm, bearingDeg) {
  * to be inside or on the boundary.
  */
 function buildRadarFootprint(rxLat, rxLon, acList) {
-  const STEPS     = 72;   // one point every 5°
-  const HALF_W    = 10;   // ±10° search window per slice
+  const STEPS     = 180;  // one point every 2° — smoother polygon outline
+  const HALF_W    = 15;   // ±15° search window — fixes coverage gap at cluster edges
   const FALLBACK  = 50;   // km — minimum radius when no aircraft in slice
 
   const pts = [];
