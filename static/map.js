@@ -162,6 +162,16 @@ function renderHistory() {
     };
     historyControl.addTo(hfdlMap);
 
+    // Add live-activity control immediately after historyControl so Leaflet
+    // stacks it below the recent-positions panel in the topleft corner.
+    if (liveActivityControl) {
+      // Already created in initMap() — re-add it now so DOM order is correct.
+      // Remove and re-add to force correct stacking after historyControl.
+      liveActivityControl.remove();
+      liveActivityControl.addTo(hfdlMap);
+      if (!showLiveActivity) liveActivityControl.getContainer().style.display = 'none';
+    }
+
     // Tick every second to keep time-ago strings real-time
     historyTickTimer = setInterval(renderHistory, 1_000);
   }
@@ -576,22 +586,6 @@ function renderFreqBandControl() {
       return div;
     };
     freqBandControl.addTo(hfdlMap);
-
-    // Add the live-activity control immediately after so Leaflet places it
-    // below the freq-band panel in the topright corner.
-    if (!liveActivityControl) {
-      liveActivityControl = L.control({ position: 'topright' });
-      liveActivityControl.onAdd = function () {
-        const div = L.DomUtil.create('div', 'map-live-activity-wrap');
-        L.DomEvent.disableClickPropagation(div);
-        L.DomEvent.disableScrollPropagation(div);
-        return div;
-      };
-      liveActivityControl.addTo(hfdlMap);
-      // Hidden by default — matches showLiveActivity initial state
-      liveActivityControl.getContainer().style.display = 'none';
-      renderLiveActivity();
-    }
   }
 
   // Only update the HTML — the delegated listeners on the container persist.
@@ -1283,9 +1277,22 @@ function initMap() {
   setInterval(updateGreyline, 60_000);
   initLayerControl();
 
-  // Start the live-activity ticker — the control itself is added to the map
-  // the first time renderFreqBandControl() creates freqBandControl, so that
-  // Leaflet stacks it below the freq-band panel in the topright corner.
+  // Live-activity overlay — topleft, below the recent-positions history panel.
+  // Created here so Leaflet inserts it after historyControl (which is added
+  // lazily on first position event) — the CSS margin-top handles the gap.
+  liveActivityControl = L.control({ position: 'topleft' });
+  liveActivityControl.onAdd = function () {
+    const div = L.DomUtil.create('div', 'map-live-activity-wrap');
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    return div;
+  };
+  liveActivityControl.addTo(hfdlMap);
+  // Hidden by default — matches showLiveActivity initial state (false)
+  liveActivityControl.getContainer().style.display = 'none';
+  renderLiveActivity();
+
+  // Start the live-activity ticker
   setInterval(tickLiveActivity, ACTIVITY_TICK_MS);
 }
 
