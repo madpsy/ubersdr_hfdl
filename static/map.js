@@ -1107,7 +1107,14 @@ function sigClass(dbfs) {
 
 function buildPopup(ac) {
   const label = [ac.flight, ac.reg, ac.icao].filter(Boolean).join(' / ') || ac.key;
-  const lastSeen = ac.last_seen ? new Date(ac.last_seen * 1000).toUTCString().replace('GMT', 'UTC') : '—';
+  const lastSeen = ac.last_seen
+    ? (() => {
+        const d    = new Date(ac.last_seen * 1000);
+        const time = d.toUTCString().replace(/.*(\d{2}:\d{2}:\d{2}).*/, '$1') + ' UTC';
+        const ago  = timeAgo(ac.last_seen);
+        return `${time} (${ago})`;
+      })()
+    : '—';
   const gsName = ac.gs_id && typeof gsNames !== 'undefined' && gsNames[ac.gs_id]
     ? gsNames[ac.gs_id]
     : ac.gs_id ? `GS ${ac.gs_id}` : null;
