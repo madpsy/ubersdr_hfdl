@@ -626,6 +626,41 @@ function renderInstances(data) {
       </div>`;
     }
   }
+
+  // Per-MHz message count chart — group freqMsgCounts by MHz band (same logic
+  // as map.js freqBand(): Math.floor(freqKhz / 1000)).
+  if (freqMsgCounts.size > 0) {
+    // Aggregate message counts per MHz band
+    const bandCounts = new Map(); // band (int MHz) → total messages
+    for (const [freqKhz, count] of freqMsgCounts) {
+      if (count <= 0) continue;
+      const band = Math.floor(freqKhz / 1000);
+      bandCounts.set(band, (bandCounts.get(band) || 0) + count);
+    }
+
+    if (bandCounts.size > 0) {
+      const sortedBands = [...bandCounts.entries()].sort((a, b) => a[0] - b[0]);
+      const maxCount = Math.max(...sortedBands.map(([, c]) => c));
+
+      overviewHtml += `<div class="freq-overview__mhz-chart-wrap">`;
+      overviewHtml += `<div class="freq-overview__mhz-chart-title">Messages per MHz band</div>`;
+      overviewHtml += `<div class="freq-overview__mhz-chart">`;
+      for (const [band, count] of sortedBands) {
+        const widthPct = maxCount > 0 ? Math.max(1, Math.round((count / maxCount) * 100)) : 0;
+        overviewHtml +=
+          `<div class="freq-overview__mhz-row">` +
+            `<span class="freq-overview__mhz-label">${band} MHz</span>` +
+            `<div class="freq-overview__mhz-bar-track">` +
+              `<div class="freq-overview__mhz-bar-fill" style="width:${widthPct}%"></div>` +
+            `</div>` +
+            `<span class="freq-overview__mhz-count">${count.toLocaleString()}</span>` +
+          `</div>`;
+      }
+      overviewHtml += `</div>`; // .freq-overview__mhz-chart
+      overviewHtml += `</div>`; // .freq-overview__mhz-chart-wrap
+    }
+  }
+
   overviewHtml += `</div>`;
 
   // Windows section
