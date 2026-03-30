@@ -15,10 +15,25 @@ const aircraftStore = {};
 // A 1-second interval updates the uptime label locally without extra fetches.
 let startTimeSec = null;
 
+// Map of window index → started_at unix seconds (0 = not running).
+// Populated by renderInstances() so tickUptime() can update the DOM each second
+// without waiting for the next /instances poll.
+const instanceStartedAt = {};
+
 function tickUptime() {
-  if (startTimeSec == null) return;
-  const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - startTimeSec);
-  document.getElementById('uptime-label').textContent = 'Uptime: ' + fmtUptime(elapsed);
+  if (startTimeSec != null) {
+    const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - startTimeSec);
+    document.getElementById('uptime-label').textContent = 'Uptime: ' + fmtUptime(elapsed);
+  }
+
+  // Tick per-instance uptimes in the Instances tab
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (const [idx, startedAt] of Object.entries(instanceStartedAt)) {
+    if (!startedAt) continue;
+    const el = document.getElementById(`inst-uptime-${idx}`);
+    if (!el) continue;
+    el.textContent = 'up ' + fmtUptimeShort(nowSec - startedAt);
+  }
 }
 
 // ---- Ground station name lookup --------------------------------------------
@@ -604,13 +619,20 @@ function renderInstances(data) {
 
   const nowSec = Math.floor(Date.now() / 1000);
 
+  // Reset the started-at map so stale entries don't linger after a re-render.
+  for (const k of Object.keys(instanceStartedAt)) delete instanceStartedAt[k];
+
   let html = overviewHtml + `<div class="instances-section-title">IQ Windows (${windows.length})</div>`;
   html += `<div class="instances-grid">`;
-  for (const w of windows) {
+  for (let i = 0; i < windows.length; i++) {
+    const w = windows[i];
     const freqs = (w.freqs_khz || []).map(f => {
       const active = activeFreqsKHz.has(f);
       return `<span class="instances-freq${active ? ' instances-freq--active' : ''}">${f.toLocaleString()}</span>`;
     }).join('');
+
+    // Store started_at so the 1-second ticker can update the uptime span live.
+    instanceStartedAt[i] = (w.running && w.started_at) ? w.started_at : 0;
 
     // Health status badge
     let statusHtml;
@@ -618,7 +640,7 @@ function renderInstances(data) {
       const uptimeSecs = w.started_at ? nowSec - w.started_at : 0;
       statusHtml =
         `<span class="inst-status inst-status--running">● Running</span>` +
-        `<span class="inst-uptime">up ${fmtUptimeShort(uptimeSecs)}</span>`;
+        `<span class="inst-uptime" id="inst-uptime-${i}">up ${fmtUptimeShort(uptimeSecs)}</span>`;
     } else if (w.last_healthy_at) {
       statusHtml =
         `<span class="inst-status inst-status--stopped">✗ Stopped</span>` +
