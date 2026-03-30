@@ -609,7 +609,7 @@ function loadGSMarkers() {
 // Computes the night-side polygon using solar position math and renders it as
 // a semi-transparent Leaflet polygon.  Updated every minute.
 
-let greylineLayer  = null;
+let greylineGroup  = null;   // L.layerGroup holding one polygon per world copy
 let showGreyline   = true;
 
 /** Solar declination in radians for a given Date. */
@@ -667,27 +667,41 @@ function nightPolygon(date) {
 
 function updateGreyline() {
   if (!hfdlMap) return;
-  const pts = nightPolygon(new Date());
-  if (greylineLayer) {
-    greylineLayer.setLatLngs(pts);
+  const basePts = nightPolygon(new Date());
+
+  // Build three copies of the polygon offset by -360, 0, +360 degrees of
+  // longitude so the night-side shading renders correctly in every world copy
+  // that Leaflet shows when the user zooms out.
+  const offsets = [-360, 0, 360];
+  const copies  = offsets.map(offset =>
+    basePts.map(([lat, lon]) => [lat, lon + offset])
+  );
+
+  if (greylineGroup) {
+    // Update each existing polygon in-place
+    const layers = greylineGroup.getLayers();
+    copies.forEach((pts, i) => layers[i].setLatLngs(pts));
   } else {
-    greylineLayer = L.polygon(pts, {
+    const polyOpts = {
       color:       'transparent',
       fillColor:   '#000033',
       fillOpacity: 0.35,
       interactive: false,
-    });
-    if (showGreyline) greylineLayer.addTo(hfdlMap);
+    };
+    greylineGroup = L.layerGroup(
+      copies.map(pts => L.polygon(pts, polyOpts))
+    );
+    if (showGreyline) greylineGroup.addTo(hfdlMap);
   }
 }
 
 function toggleGreyline(visible) {
   showGreyline = visible;
-  if (!greylineLayer) return;
+  if (!greylineGroup) return;
   if (visible) {
-    if (!hfdlMap.hasLayer(greylineLayer)) greylineLayer.addTo(hfdlMap);
+    if (!hfdlMap.hasLayer(greylineGroup)) greylineGroup.addTo(hfdlMap);
   } else {
-    if (hfdlMap.hasLayer(greylineLayer)) greylineLayer.remove();
+    if (hfdlMap.hasLayer(greylineGroup)) greylineGroup.remove();
   }
 }
 
