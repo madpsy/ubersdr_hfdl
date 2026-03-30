@@ -505,14 +505,60 @@ function renderInstances(data) {
   }
   extraEl.innerHTML = extraHtml;
 
-  // Windows section
+  // Frequency overview stats
   const windows = Array.isArray(data.windows) ? data.windows : [];
+  const disabledFreqs = Array.isArray(data.disabled_freqs) ? data.disabled_freqs : [];
+
+  // Collect all configured frequencies across all windows
+  const allConfiguredFreqs = new Set();
+  for (const w of windows) {
+    for (const f of (w.freqs_khz || [])) {
+      allConfiguredFreqs.add(f);
+    }
+  }
+
+  const totalConfigured = allConfiguredFreqs.size;
+  const totalDisabled   = disabledFreqs.length;
+  const totalEnabled    = totalConfigured; // windows only contain enabled freqs
+  const totalActive     = [...allConfiguredFreqs].filter(f => activeFreqsKHz.has(f)).length;
+  const totalInactive   = totalEnabled - totalActive;
+
+  let overviewHtml = `<div class="instances-section-title">Frequency Overview</div>`;
+  overviewHtml += `<div class="freq-overview">`;
+  overviewHtml += `<div class="freq-overview__stat">
+    <span class="freq-overview__value">${(totalEnabled + totalDisabled).toLocaleString()}</span>
+    <span class="freq-overview__label">Total</span>
+  </div>`;
+  overviewHtml += `<div class="freq-overview__stat freq-overview__stat--active">
+    <span class="freq-overview__value">${totalActive.toLocaleString()}</span>
+    <span class="freq-overview__label">Active</span>
+  </div>`;
+  overviewHtml += `<div class="freq-overview__stat freq-overview__stat--inactive">
+    <span class="freq-overview__value">${totalInactive.toLocaleString()}</span>
+    <span class="freq-overview__label">Inactive</span>
+  </div>`;
+  overviewHtml += `<div class="freq-overview__stat freq-overview__stat--disabled">
+    <span class="freq-overview__value">${totalDisabled.toLocaleString()}</span>
+    <span class="freq-overview__label">Disabled</span>
+  </div>`;
+  if (totalEnabled > 0) {
+    const pct = Math.round((totalActive / totalEnabled) * 100);
+    overviewHtml += `<div class="freq-overview__bar-wrap">
+      <div class="freq-overview__bar-track">
+        <div class="freq-overview__bar-fill" style="width:${pct}%"></div>
+      </div>
+      <span class="freq-overview__bar-label">${pct}% of enabled frequencies active this session</span>
+    </div>`;
+  }
+  overviewHtml += `</div>`;
+
+  // Windows section
   if (windows.length === 0) {
-    windowsEl.innerHTML = `<div class="instances-section-title">IQ Windows</div><p class="empty">No windows configured.</p>`;
+    windowsEl.innerHTML = overviewHtml + `<div class="instances-section-title">IQ Windows</div><p class="empty">No windows configured.</p>`;
     return;
   }
 
-  let html = `<div class="instances-section-title">IQ Windows (${windows.length})</div>`;
+  let html = overviewHtml + `<div class="instances-section-title">IQ Windows (${windows.length})</div>`;
   html += `<div class="instances-grid">`;
   for (const w of windows) {
     const freqs = (w.freqs_khz || []).map(f => {
@@ -531,7 +577,6 @@ function renderInstances(data) {
   html += `</div>`;
 
   // Disabled frequencies — shown as a flat list of red chips below the windows
-  const disabledFreqs = Array.isArray(data.disabled_freqs) ? data.disabled_freqs : [];
   if (disabledFreqs.length > 0) {
     html += `<div class="instances-section-title">Disabled Frequencies (${disabledFreqs.length})</div>`;
     html += `<div class="instances-disabled-freqs">`;

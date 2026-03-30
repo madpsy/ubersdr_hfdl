@@ -1259,6 +1259,84 @@ td.empty {
   gap: 4px;
 }
 
+/* ---- Instances — frequency overview stats ---- */
+
+.freq-overview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 4px;
+}
+
+.freq-overview__stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 64px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.freq-overview__value {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.freq-overview__label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.freq-overview__stat--active .freq-overview__value  { color: var(--green); }
+.freq-overview__stat--active .freq-overview__label  { color: rgba(63,185,80,0.7); }
+
+.freq-overview__stat--inactive .freq-overview__value { color: var(--muted); }
+
+.freq-overview__stat--disabled .freq-overview__value { color: var(--red); }
+.freq-overview__stat--disabled .freq-overview__label { color: rgba(248,81,73,0.7); }
+
+.freq-overview__bar-wrap {
+  flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-left: 8px;
+}
+
+.freq-overview__bar-track {
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.freq-overview__bar-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+
+.freq-overview__bar-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 /* ---- Signal history tab ---- */
 
 #signal-charts {
