@@ -239,6 +239,95 @@ let showGSMarkers = true;
 let showAcLabels  = false;
 let showPlanes    = true;
 
+// ---- Frequency band filter -------------------------------------------------
+// Keys are MHz integers (e.g. 8, 11, 17), values are booleans (true = visible).
+// New bands default to true (visible) when first seen.
+const freqBandFilter = {};
+
+let freqBandControl = null;
+
+/** Return the MHz band integer for a kHz frequency value. */
+function freqBand(freqKhz) {
+  return Math.floor(freqKhz / 1000);
+}
+
+/** True if the aircraft's frequency band is currently enabled (or unknown). */
+function isBandVisible(ac) {
+  if (!ac.freq_khz) return true;
+  const band = freqBand(ac.freq_khz);
+  return freqBandFilter[band] !== false;
+}
+
+function renderFreqBandControl() {
+  if (!hfdlMap) return;
+
+  // Collect all bands present in current aircraft data
+  const bands = new Set();
+  for (const ac of Object.values(aircraftData)) {
+    if (ac.freq_khz) bands.add(freqBand(ac.freq_khz));
+  }
+
+  // Register any new bands as visible by default
+  for (const band of bands) {
+    if (!(band in freqBandFilter)) {
+      freqBandFilter[band] = true;
+    }
+  }
+
+  // Build HTML
+  const sorted = [...bands].sort((a, b) => a - b);
+
+  let html = `<div class="map-freqband-ctrl__title">Freq Bands</div>`;
+  if (sorted.length === 0) {
+    html += `<div class="map-freqband-ctrl__empty">No aircraft yet</div>`;
+  } else {
+    for (const band of sorted) {
+      const checked = freqBandFilter[band] !== false ? 'checked' : '';
+      html +=
+        `<label class="map-layer-ctrl__row">` +
+        `<input type="checkbox" class="freqband-cb" data-band="${band}" ${checked}>` +
+        `<span>${band} MHz</span>` +
+        `</label>`;
+    }
+  }
+
+  if (!freqBandControl) {
+    freqBandControl = L.control({ position: 'topright' });
+    freqBandControl.onAdd = function () {
+      const div = L.DomUtil.create('div', 'map-layer-ctrl map-freqband-ctrl');
+      L.DomEvent.disableClickPropagation(div);
+      L.DomEvent.disableScrollPropagation(div);
+      return div;
+    };
+    freqBandControl.addTo(hfdlMap);
+  }
+
+  freqBandControl.getContainer().innerHTML = html;
+
+  // Attach change handlers
+  freqBandControl.getContainer().querySelectorAll('.freqband-cb').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const band = parseInt(e.target.dataset.band, 10);
+      freqBandFilter[band] = e.target.checked;
+      applyBandFilter();
+    });
+  });
+}
+
+/** Show/hide all aircraft markers according to the current band filter and showPlanes state. */
+function applyBandFilter() {
+  for (const [key, marker] of Object.entries(aircraftMarkers)) {
+    const ac = aircraftData[key];
+    if (!ac) continue;
+    const visible = showPlanes && isBandVisible(ac);
+    if (visible) {
+      if (!hfdlMap.hasLayer(marker)) marker.addTo(hfdlMap);
+    } else {
+      if (hfdlMap.hasLayer(marker)) marker.remove();
+    }
+  }
+}
+
 // ---- Map stats counter (bottom-left) ---------------------------------------
 let statsCountControl = null;
 
@@ -300,7 +389,7 @@ function loadGSMarkers() {
         if (!gs.lat || !gs.lon) continue;
         const icon   = makeGSIcon(gs);
         const lastHeardStr = gs.last_heard
-          ? new Date(gs.last_heard * 1000).toUTCString()
+          ? new Date(gs.last_heard * 1000).toUTCString().replace('GMT', 'UTC')
           : 'Never';
         const freqLine = gs.heard_freqs_khz && gs.heard_freqs_khz.length
           ? `<br>Heard on: ${gs.heard_freqs_khz.map(f => (f / 1000).toFixed(3) + ' MHz').join(', ')}`
@@ -331,7 +420,7 @@ function loadGSMarkers() {
               ? `<br>Distance: ${fmtKm(distKm)}`
               : '';
             const lastHeardStr2 = gs.last_heard
-              ? new Date(gs.last_heard * 1000).toUTCString()
+              ? new Date(gs.last_heard * 1000).toUTCString().replace('GMT', 'UTC')
               : 'Never';
             const freqLine2 = gs.heard_freqs_khz && gs.heard_freqs_khz.length
               ? `<br>Heard on: ${gs.heard_freqs_khz.map(f => (f / 1000).toFixed(3) + ' MHz').join(', ')}`
@@ -481,13 +570,8 @@ function toggleAcLabels(visible) {
 
 function togglePlanes(visible) {
   showPlanes = visible;
-  for (const m of Object.values(aircraftMarkers)) {
-    if (visible) {
-      if (!hfdlMap.hasLayer(m)) m.addTo(hfdlMap);
-    } else {
-      if (hfdlMap.hasLayer(m)) m.remove();
-    }
-  }
+  // Respect band filter when re-showing planes
+  applyBandFilter();
 }
 
 // ---- Layer toggle control --------------------------------------------------
@@ -719,7 +803,7 @@ function sigClass(dbfs) {
 
 function buildPopup(ac) {
   const label = [ac.flight, ac.reg, ac.icao].filter(Boolean).join(' / ') || ac.key;
-  const lastSeen = ac.last_seen ? new Date(ac.last_seen * 1000).toUTCString() : '—';
+  const lastSeen = ac.last_seen ? new Date(ac.last_seen * 1000).toUTCString().replace('GMT', 'UTC') : '—';
   const gsName = ac.gs_id && typeof gsNames !== 'undefined' && gsNames[ac.gs_id]
     ? gsNames[ac.gs_id]
     : ac.gs_id ? `GS ${ac.gs_id}` : null;
@@ -767,7 +851,7 @@ function upsertMarker(ac, fromSSE = false) {
   } else {
     const marker = L.marker([ac.lat, ac.lon], { icon })
       .bindPopup(popup, { autoPan: false });
-    if (showPlanes) marker.addTo(hfdlMap);
+    if (showPlanes && isBandVisible(ac)) marker.addTo(hfdlMap);
 
     marker.on('mouseover', () => {
       const live = aircraftData[ac.key];
@@ -808,6 +892,7 @@ function upsertMarker(ac, fromSSE = false) {
   }
 
   renderLegend();
+  renderFreqBandControl();
 }
 
 // ---- Selection / track -----------------------------------------------------
@@ -915,6 +1000,7 @@ function handlePurgeEvent(key) {
     if (selectedKey === key) deselectAircraft();
     updateAircraftCount();
     renderLegend();
+    renderFreqBandControl();
   }
 }
 
