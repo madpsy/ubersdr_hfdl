@@ -785,6 +785,83 @@ td.empty {
 .type-spdu  { color: var(--muted); }
 .type-lpdu  { color: var(--text); }
 
+/* ---- Map distance & bearing stats (bottom-left, above plane count) ---- */
+
+.map-dist-stats {
+  background: rgba(22, 27, 34, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 190px;
+  backdrop-filter: blur(4px);
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.map-dist-stats__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 5px;
+}
+
+.map-dist-stats__count {
+  font-weight: 400;
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.map-dist-stats__row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1px 0;
+}
+
+.map-dist-stats__row--arc {
+  border-top: 1px solid rgba(255,255,255,0.06);
+  margin-top: 3px;
+  padding-top: 4px;
+}
+
+.map-dist-stats__lbl {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  width: 26px;
+  flex-shrink: 0;
+}
+
+.map-dist-stats__val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.map-dist-stats__dir {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.map-dist-stats__ac {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
 /* ---- Map frequency band filter control ---- */
 
 .map-freqband-ctrl {

@@ -326,6 +326,7 @@ function applyBandFilter() {
       if (hfdlMap.hasLayer(marker)) marker.remove();
     }
   }
+  renderDistanceStats();
 }
 
 // ---- Map stats counter (bottom-left) ---------------------------------------
@@ -707,6 +708,118 @@ function fmtKm(km) {
 }
 
 /**
+ * Compute the initial bearing (degrees, 0–360) from the receiver to [lat, lon].
+ * Returns null if receiverLatLng is not set.
+ */
+function bearingToReceiver(lat, lon) {
+  if (!receiverLatLng) return null;
+  const φ1 = receiverLatLng[0] * DEG;
+  const φ2 = lat * DEG;
+  const dλ = (lon - receiverLatLng[1]) * DEG;
+  const y = Math.sin(dλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(dλ);
+  return ((Math.atan2(y, x) * RAD) + 360) % 360;
+}
+
+/** Convert a bearing in degrees to a 16-point compass abbreviation. */
+function bearingToCardinal(deg) {
+  const pts = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return pts[Math.round(deg / 22.5) % 16];
+}
+
+// ---- Distance / bearing stats control (bottom-left, above plane count) -----
+let distStatsControl = null;
+
+function renderDistanceStats() {
+  if (!hfdlMap || !receiverLatLng) return;
+
+  // Collect distances and bearings for all *visible* aircraft
+  // (respects showPlanes + band filter — checks whether marker is on the map)
+  const distances = [];
+  const bearings  = [];
+
+  for (const [key, ac] of Object.entries(aircraftData)) {
+    if (!ac.lat || !ac.lon) continue;
+    const marker = aircraftMarkers[key];
+    if (!marker || !hfdlMap.hasLayer(marker)) continue;
+
+    const d = distanceToReceiverKm(ac.lat, ac.lon);
+    const b = bearingToReceiver(ac.lat, ac.lon);
+    if (d !== null) distances.push({ d, b, key });
+    if (b !== null) bearings.push(b);
+  }
+
+  if (!distStatsControl) {
+    distStatsControl = L.control({ position: 'bottomleft' });
+    distStatsControl.onAdd = function () {
+      this._div = L.DomUtil.create('div', '');
+      L.DomEvent.disableClickPropagation(this._div);
+      return this._div;
+    };
+    distStatsControl.addTo(hfdlMap);
+  }
+
+  if (distances.length === 0) {
+    distStatsControl._div.innerHTML = '';
+    return;
+  }
+
+  distances.sort((a, b) => a.d - b.d);
+  const minEntry = distances[0];
+  const maxEntry = distances[distances.length - 1];
+  const avgD = distances.reduce((s, e) => s + e.d, 0) / distances.length;
+
+  const minCard = minEntry.b != null ? bearingToCardinal(minEntry.b) : '—';
+  const maxCard = maxEntry.b != null ? bearingToCardinal(maxEntry.b) : '—';
+
+  // Arc coverage: sort bearings, find largest gap, arc = 360 - gap
+  let arcDeg = 0;
+  if (bearings.length > 1) {
+    const sorted = [...bearings].sort((a, b) => a - b);
+    let maxGap = (sorted[0] + 360) - sorted[sorted.length - 1]; // wrap-around gap
+    for (let i = 1; i < sorted.length; i++) {
+      maxGap = Math.max(maxGap, sorted[i] - sorted[i - 1]);
+    }
+    arcDeg = Math.round(360 - maxGap);
+  }
+
+  const minAc = aircraftData[minEntry.key];
+  const maxAc = aircraftData[maxEntry.key];
+  const minLabel = minAc ? (minAc.flight || minAc.reg || minAc.icao || minEntry.key) : minEntry.key;
+  const maxLabel = maxAc ? (maxAc.flight || maxAc.reg || maxAc.icao || maxEntry.key) : maxEntry.key;
+
+  const html =
+    `<div class="map-dist-stats">` +
+    `<div class="map-dist-stats__title">Distance &amp; Bearing` +
+    ` <span class="map-dist-stats__count">${distances.length} ac</span></div>` +
+    `<div class="map-dist-stats__row">` +
+      `<span class="map-dist-stats__lbl">Min</span>` +
+      `<span class="map-dist-stats__val">${fmtKm(minEntry.d)}</span>` +
+      `<span class="map-dist-stats__dir">${minCard}</span>` +
+      `<span class="map-dist-stats__ac">${esc(minLabel.toUpperCase())}</span>` +
+    `</div>` +
+    `<div class="map-dist-stats__row">` +
+      `<span class="map-dist-stats__lbl">Avg</span>` +
+      `<span class="map-dist-stats__val">${fmtKm(avgD)}</span>` +
+    `</div>` +
+    `<div class="map-dist-stats__row">` +
+      `<span class="map-dist-stats__lbl">Max</span>` +
+      `<span class="map-dist-stats__val">${fmtKm(maxEntry.d)}</span>` +
+      `<span class="map-dist-stats__dir">${maxCard}</span>` +
+      `<span class="map-dist-stats__ac">${esc(maxLabel.toUpperCase())}</span>` +
+    `</div>` +
+    (bearings.length > 1
+      ? `<div class="map-dist-stats__row map-dist-stats__row--arc">` +
+          `<span class="map-dist-stats__lbl">Arc</span>` +
+          `<span class="map-dist-stats__val">${arcDeg}°</span>` +
+        `</div>`
+      : '') +
+    `</div>`;
+
+  distStatsControl._div.innerHTML = html;
+}
+
+/**
  * Place (or update) the SDR receiver marker on the map.
  * Called from app.js after a successful /receiver/description fetch.
  *
@@ -748,6 +861,10 @@ function placeReceiverMarker(info) {
     receiverMarker.on('mouseover', () => receiverMarker.openPopup());
     receiverMarker.on('mouseout',  () => receiverMarker.closePopup());
   }
+
+  // Now that we have a receiver position, render distance stats for any
+  // aircraft that were already on the map before the receiver was known.
+  renderDistanceStats();
 }
 
 function initMap() {
@@ -893,6 +1010,7 @@ function upsertMarker(ac, fromSSE = false) {
 
   renderLegend();
   renderFreqBandControl();
+  renderDistanceStats();
 }
 
 // ---- Selection / track -----------------------------------------------------
@@ -1001,6 +1119,7 @@ function handlePurgeEvent(key) {
     updateAircraftCount();
     renderLegend();
     renderFreqBandControl();
+    renderDistanceStats();
   }
 }
 
