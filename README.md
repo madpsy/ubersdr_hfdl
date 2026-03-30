@@ -3,6 +3,8 @@
 Tools for receiving HFDL using an [UberSDR](https://ubersdr.org) instance as the
 radio back-end and [dumphfdl](https://github.com/szpajder/dumphfdl) as the decoder.
 
+> **Note:** By default, this tool will send SBS messages to the [OARC](https://www.oarc.uk/) (Online Amateur Radio Club) plane tracker at [adsb.oarc.uk](https://adsb.oarc.uk/).
+
 ---
 
 ## Quick Start — Prebuilt Docker Image
