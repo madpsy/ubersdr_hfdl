@@ -1378,13 +1378,19 @@ td.empty {
 .sig-group__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-  gap: 1px;
-  background: var(--border);
+  gap: 0;
+  background: var(--surface);
 }
 
 .sig-chart-card {
   background: var(--surface);
   padding: 14px 16px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.sig-chart-card:last-child {
+  border-right: none;
 }
 
 .sig-chart-card__title {
