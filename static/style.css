@@ -137,6 +137,40 @@ main {
   overflow: hidden;
 }
 
+/* ---- Zoom control — centred horizontally at the top of the map ---- */
+
+/* Pull the zoom control out of the topleft corner container and centre it */
+.leaflet-top.leaflet-left .leaflet-control-zoom {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  /* Lay the + and − buttons side by side */
+  display: flex;
+  flex-direction: row;
+}
+
+/* Remove the vertical border between stacked buttons; add a vertical one */
+.leaflet-control-zoom-in,
+.leaflet-control-zoom-out {
+  border-bottom: none !important;
+  border-right: 1px solid rgba(255,255,255,0.15) !important;
+  border-radius: 0 !important;
+  width: 30px !important;
+  height: 30px !important;
+  line-height: 30px !important;
+}
+
+.leaflet-control-zoom-in {
+  border-radius: 4px 0 0 4px !important;
+}
+
+.leaflet-control-zoom-out {
+  border-right: none !important;
+  border-radius: 0 4px 4px 0 !important;
+}
+
 /* Stats and feed panels — scrollable with padding */
 #tab-stats,
 #tab-feed {

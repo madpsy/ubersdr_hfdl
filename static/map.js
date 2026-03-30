@@ -1253,8 +1253,10 @@ function initMap() {
   hfdlMap = L.map('map', {
     center: [30, 0],
     zoom: 3,
-    zoomControl: true,
+    zoomControl: false,
   });
+  // Re-add zoom control — positioned via CSS to sit centred at the top of the map
+  L.control.zoom({ position: 'topleft' }).addTo(hfdlMap);
 
   // Apply default layer states that differ from the CSS baseline
   // (plane labels are off by default)
