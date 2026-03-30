@@ -391,6 +391,87 @@ function toggleArcLayer(visible) {
   }
 }
 
+// ---- Live band activity overlay --------------------------------------------
+// Tracks message arrivals per MHz band over a rolling window so the map can
+// show a "live activity" bar chart that decays smoothly over time.
+
+const ACTIVITY_WINDOW_MS = 10_000; // keep events for 10 seconds
+const ACTIVITY_TICK_MS   =    400; // redraw interval
+
+// Array of { band: int, ts: number } — one entry per received message.
+const activityEvents = [];
+
+let liveActivityControl = null;
+
+/**
+ * Record a new message arrival for the given kHz frequency.
+ * Called from app.js whenever an SSE 'message' event arrives.
+ */
+function recordBandActivity(freqKhz) {
+  if (!freqKhz) return;
+  const band = Math.floor(freqKhz / 1000);
+  activityEvents.push({ band, ts: Date.now() });
+}
+
+/** Prune events older than ACTIVITY_WINDOW_MS and re-render the control. */
+function tickLiveActivity() {
+  const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
+  // Remove stale entries from the front (they are appended in order)
+  while (activityEvents.length > 0 && activityEvents[0].ts < cutoff) {
+    activityEvents.shift();
+  }
+  renderLiveActivity();
+}
+
+function renderLiveActivity() {
+  if (!hfdlMap) return;
+
+  // Aggregate counts per band from the current window
+  const bandCounts = new Map(); // band → count
+  for (const { band } of activityEvents) {
+    bandCounts.set(band, (bandCounts.get(band) || 0) + 1);
+  }
+
+  // Build HTML
+  const total = activityEvents.length;
+  let html = `<div class="map-live-activity">` +
+    `<div class="map-live-activity__title">Live activity` +
+    `<span class="map-live-activity__window">10 s</span></div>`;
+
+  if (bandCounts.size === 0) {
+    html += `<div class="map-live-activity__empty">No messages yet</div>`;
+  } else {
+    const sorted = [...bandCounts.entries()].sort((a, b) => a[0] - b[0]);
+    const maxCount = Math.max(...sorted.map(([, c]) => c));
+    for (const [band, count] of sorted) {
+      const widthPct = maxCount > 0 ? Math.max(3, Math.round((count / maxCount) * 100)) : 0;
+      html +=
+        `<div class="map-live-activity__row">` +
+          `<span class="map-live-activity__label">${band}</span>` +
+          `<div class="map-live-activity__track">` +
+            `<div class="map-live-activity__fill" style="width:${widthPct}%"></div>` +
+          `</div>` +
+          `<span class="map-live-activity__count">${count}</span>` +
+        `</div>`;
+    }
+    html += `<div class="map-live-activity__total">${total} msg / 10 s</div>`;
+  }
+  html += `</div>`;
+
+  if (!liveActivityControl) {
+    liveActivityControl = L.control({ position: 'topright' });
+    liveActivityControl.onAdd = function () {
+      const div = L.DomUtil.create('div', 'map-live-activity-wrap');
+      L.DomEvent.disableClickPropagation(div);
+      L.DomEvent.disableScrollPropagation(div);
+      return div;
+    };
+    liveActivityControl.addTo(hfdlMap);
+  }
+
+  liveActivityControl.getContainer().innerHTML = html;
+}
+
 // ---- Frequency band filter -------------------------------------------------
 // Keys are MHz integers (e.g. 8, 11, 17), values are booleans (true = visible).
 // New bands default to true (visible) when first seen.
@@ -1174,6 +1255,10 @@ function initMap() {
   updateGreyline();
   setInterval(updateGreyline, 60_000);
   initLayerControl();
+
+  // Start the live-activity ticker — renders the overlay and prunes old events
+  renderLiveActivity();
+  setInterval(tickLiveActivity, ACTIVITY_TICK_MS);
 }
 
 // ---- Load initial aircraft positions ---------------------------------------

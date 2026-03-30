@@ -318,6 +318,10 @@ function handleSSEEvent(raw) {
       activeFreqsKHz.add(data.freq_khz);
       freqMsgCounts.set(data.freq_khz, (freqMsgCounts.get(data.freq_khz) || 0) + 1);
       if (cachedInstancesData) renderInstances(cachedInstancesData);
+      // Feed the live-activity overlay on the map
+      if (typeof recordBandActivity === 'function') {
+        recordBandActivity(data.freq_khz);
+      }
     }
 
   } else if (type === 'position') {
