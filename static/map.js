@@ -282,22 +282,28 @@ function destinationPoint(lat, lon, radiusKm, bearingDeg) {
  * to be inside or on the boundary.
  */
 function buildRadarFootprint(rxLat, rxLon, acList) {
-  const STEPS     = 180;  // one point every 2° — smoother polygon outline
-  const HALF_W    = 15;   // ±15° search window — fixes coverage gap at cluster edges
-  const FALLBACK  = 50;   // km — minimum radius when no aircraft in slice
+  const STEPS    = 180;  // one point every 2° — smoother polygon outline
+  const SMOOTH   = 8;    // spread each aircraft ±8 slices (±16°) from its nearest slice
+  const FALLBACK = 50;   // km — minimum radius when no aircraft in slice
 
+  // Pass 1: assign each aircraft to its nearest slice
+  const sliceMax = new Array(STEPS).fill(FALLBACK);
+  for (const { d, b } of acList) {
+    const i = Math.round(b / (360 / STEPS)) % STEPS;
+    if (d > sliceMax[i]) sliceMax[i] = d;
+  }
+
+  // Pass 2: smooth outward — each slice takes the max within ±SMOOTH neighbours.
+  // This guarantees every aircraft is inside the polygon without over-inflating
+  // slices that are far from any aircraft.
   const pts = [];
   for (let i = 0; i < STEPS; i++) {
-    const centreBearing = (360 * i / STEPS);
     let maxD = FALLBACK;
-
-    for (const { d, b } of acList) {
-      // Angular difference, wrapped to [-180, 180]
-      let diff = ((b - centreBearing) + 540) % 360 - 180;
-      if (Math.abs(diff) <= HALF_W && d > maxD) maxD = d;
+    for (let j = -SMOOTH; j <= SMOOTH; j++) {
+      const idx = (i + j + STEPS) % STEPS;
+      if (sliceMax[idx] > maxD) maxD = sliceMax[idx];
     }
-
-    pts.push(destinationPoint(rxLat, rxLon, maxD, centreBearing));
+    pts.push(destinationPoint(rxLat, rxLon, maxD, 360 * i / STEPS));
   }
   return pts;
 }
