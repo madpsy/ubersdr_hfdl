@@ -132,6 +132,32 @@ function renderHistory() {
         if (marker) hfdlMap.panTo(marker.getLatLng());
       });
 
+      // Delegated mouseover: show popup and range line for the hovered aircraft.
+      L.DomEvent.on(this._div, 'mouseover', (e) => {
+        const row = e.target.closest('.map-history__row--clickable');
+        if (!row) return;
+        const key = row.dataset.key;
+        if (!key) return;
+        const marker = aircraftMarkers[key];
+        const ac = aircraftData[key];
+        if (marker && ac) {
+          marker.setPopupContent(buildPopup(ac));
+          showRxLine(ac.lat, ac.lon);
+          marker.openPopup();
+        }
+      });
+
+      // Delegated mouseout: close popup and hide range line.
+      L.DomEvent.on(this._div, 'mouseout', (e) => {
+        const row = e.target.closest('.map-history__row--clickable');
+        if (!row) return;
+        const key = row.dataset.key;
+        if (!key) return;
+        const marker = aircraftMarkers[key];
+        if (marker) marker.closePopup();
+        hideRxLine();
+      });
+
       return this._div;
     };
     historyControl.addTo(hfdlMap);
