@@ -238,6 +238,126 @@ function makePlaneIcon(ac, selected) {
 let showGSMarkers = true;
 let showAcLabels  = false;
 let showPlanes    = true;
+let showArcLayer  = true;
+
+// ---- Coverage arc layer ----------------------------------------------------
+let arcLayer = null; // L.polygon drawn from receiver showing bearing/distance coverage
+
+/**
+ * Given a centre point, a radius in km, and a bearing in degrees,
+ * return the [lat, lon] of the point at that distance and bearing
+ * using the spherical Earth formula.
+ */
+function destinationPoint(lat, lon, radiusKm, bearingDeg) {
+  const R  = 6371;
+  const δ  = radiusKm / R;           // angular distance
+  const θ  = bearingDeg * DEG;
+  const φ1 = lat * DEG;
+  const λ1 = lon * DEG;
+  const φ2 = Math.asin(
+    Math.sin(φ1) * Math.cos(δ) +
+    Math.cos(φ1) * Math.sin(δ) * Math.cos(θ)
+  );
+  const λ2 = λ1 + Math.atan2(
+    Math.sin(θ) * Math.sin(δ) * Math.cos(φ1),
+    Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2)
+  );
+  return [φ2 * RAD, ((λ2 * RAD) + 540) % 360 - 180];
+}
+
+/**
+ * Build a closed polygon representing a sector (pie slice) from the receiver.
+ * startBearing and endBearing are in degrees (0–360), going clockwise.
+ * The arc sweeps from startBearing to endBearing in the clockwise direction.
+ */
+function buildArcPolygon(lat, lon, radiusKm, startBearing, endBearing) {
+  const STEPS = 64;
+  // Normalise so we always sweep clockwise from start to end
+  let sweep = ((endBearing - startBearing) + 360) % 360;
+  if (sweep === 0) sweep = 360; // full circle
+
+  const pts = [[lat, lon]]; // start at receiver
+  for (let i = 0; i <= STEPS; i++) {
+    const bearing = (startBearing + (sweep * i / STEPS)) % 360;
+    pts.push(destinationPoint(lat, lon, radiusKm, bearing));
+  }
+  pts.push([lat, lon]); // close back to receiver
+  return pts;
+}
+
+/**
+ * Recompute and redraw the coverage arc based on currently visible aircraft.
+ * Called from renderDistanceStats() and placeReceiverMarker().
+ */
+function updateArcLayer() {
+  if (!hfdlMap || !receiverLatLng) {
+    if (arcLayer) { arcLayer.remove(); arcLayer = null; }
+    return;
+  }
+
+  // Collect bearings and max distance from visible aircraft
+  const bearings  = [];
+  let   maxDistKm = 0;
+
+  for (const [key, ac] of Object.entries(aircraftData)) {
+    if (!ac.lat || !ac.lon) continue;
+    const marker = aircraftMarkers[key];
+    if (!marker || !hfdlMap.hasLayer(marker)) continue;
+    const d = distanceToReceiverKm(ac.lat, ac.lon);
+    const b = bearingToReceiver(ac.lat, ac.lon);
+    if (d !== null && d > maxDistKm) maxDistKm = d;
+    if (b !== null) bearings.push(b);
+  }
+
+  if (bearings.length === 0 || maxDistKm === 0) {
+    if (arcLayer) { arcLayer.remove(); arcLayer = null; }
+    return;
+  }
+
+  // Find the start/end of the coverage arc (smallest clockwise arc covering all bearings)
+  const sorted = [...bearings].sort((a, b) => a - b);
+  let maxGap = (sorted[0] + 360) - sorted[sorted.length - 1];
+  let gapAfterIdx = sorted.length - 1; // index after which the largest gap starts
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i] - sorted[i - 1];
+    if (gap > maxGap) { maxGap = gap; gapAfterIdx = i - 1; }
+  }
+
+  // Arc starts just after the largest gap
+  const startBearing = sorted[(gapAfterIdx + 1) % sorted.length];
+  const endBearing   = sorted[gapAfterIdx];
+
+  const pts = buildArcPolygon(
+    receiverLatLng[0], receiverLatLng[1],
+    maxDistKm,
+    startBearing, endBearing
+  );
+
+  if (arcLayer) {
+    arcLayer.setLatLngs(pts);
+  } else {
+    arcLayer = L.polygon(pts, {
+      color:       '#58a6ff',
+      weight:      1.5,
+      opacity:     0.6,
+      fillColor:   '#58a6ff',
+      fillOpacity: 0.08,
+      interactive: false,
+      dashArray:   '4 4',
+    });
+    if (showArcLayer) arcLayer.addTo(hfdlMap);
+  }
+}
+
+function toggleArcLayer(visible) {
+  showArcLayer = visible;
+  if (!arcLayer) return;
+  if (visible) {
+    if (!hfdlMap.hasLayer(arcLayer)) arcLayer.addTo(hfdlMap);
+  } else {
+    if (hfdlMap.hasLayer(arcLayer)) arcLayer.remove();
+  }
+}
 
 // ---- Frequency band filter -------------------------------------------------
 // Keys are MHz integers (e.g. 8, 11, 17), values are booleans (true = visible).
@@ -289,6 +409,11 @@ function renderFreqBandControl() {
         `<span>${band} MHz</span>` +
         `</label>`;
     }
+    html +=
+      `<div class="map-freqband-ctrl__actions">` +
+      `<button class="map-freqband-ctrl__btn" id="freqband-all">All</button>` +
+      `<button class="map-freqband-ctrl__btn" id="freqband-none">None</button>` +
+      `</div>`;
   }
 
   if (!freqBandControl) {
@@ -304,7 +429,7 @@ function renderFreqBandControl() {
 
   freqBandControl.getContainer().innerHTML = html;
 
-  // Attach change handlers
+  // Attach checkbox change handlers
   freqBandControl.getContainer().querySelectorAll('.freqband-cb').forEach(cb => {
     cb.addEventListener('change', (e) => {
       const band = parseInt(e.target.dataset.band, 10);
@@ -312,6 +437,24 @@ function renderFreqBandControl() {
       applyBandFilter();
     });
   });
+
+  // All / None buttons
+  const allBtn  = freqBandControl.getContainer().querySelector('#freqband-all');
+  const noneBtn = freqBandControl.getContainer().querySelector('#freqband-none');
+  if (allBtn) {
+    allBtn.addEventListener('click', () => {
+      for (const band of Object.keys(freqBandFilter)) freqBandFilter[band] = true;
+      applyBandFilter();
+      renderFreqBandControl();
+    });
+  }
+  if (noneBtn) {
+    noneBtn.addEventListener('click', () => {
+      for (const band of Object.keys(freqBandFilter)) freqBandFilter[band] = false;
+      applyBandFilter();
+      renderFreqBandControl();
+    });
+  }
 }
 
 /** Show/hide all aircraft markers according to the current band filter and showPlanes state. */
@@ -602,6 +745,10 @@ function initLayerControl() {
       `<label class="map-layer-ctrl__row">` +
         `<input type="checkbox" id="lyr-greyline" checked>` +
         `<span>Grey line</span>` +
+      `</label>` +
+      `<label class="map-layer-ctrl__row">` +
+        `<input type="checkbox" id="lyr-arc" checked>` +
+        `<span>Coverage arc</span>` +
       `</label>`;
 
     div.querySelector('#lyr-gs').addEventListener('change', e => {
@@ -615,6 +762,9 @@ function initLayerControl() {
     });
     div.querySelector('#lyr-greyline').addEventListener('change', e => {
       toggleGreyline(e.target.checked);
+    });
+    div.querySelector('#lyr-arc').addEventListener('change', e => {
+      toggleArcLayer(e.target.checked);
     });
 
     return div;
@@ -787,6 +937,8 @@ function renderDistanceStats() {
   const maxAc = aircraftData[maxEntry.key];
   const minLabel = minAc ? (minAc.flight || minAc.reg || minAc.icao || minEntry.key) : minEntry.key;
   const maxLabel = maxAc ? (maxAc.flight || maxAc.reg || maxAc.icao || maxEntry.key) : maxEntry.key;
+  const minBand  = minAc && minAc.freq_khz ? `${freqBand(minAc.freq_khz)} MHz` : '';
+  const maxBand  = maxAc && maxAc.freq_khz ? `${freqBand(maxAc.freq_khz)} MHz` : '';
 
   const html =
     `<div class="map-dist-stats">` +
@@ -796,7 +948,8 @@ function renderDistanceStats() {
       `<span class="map-dist-stats__lbl">Min</span>` +
       `<span class="map-dist-stats__val">${fmtKm(minEntry.d)}</span>` +
       `<span class="map-dist-stats__dir">${minCard}</span>` +
-      `<span class="map-dist-stats__ac">${esc(minLabel.toUpperCase())}</span>` +
+      `<span class="map-dist-stats__ac map-dist-stats__ac--link" data-key="${esc(minEntry.key)}">${esc(minLabel.toUpperCase())}</span>` +
+      (minBand ? `<span class="map-dist-stats__band">${minBand}</span>` : '') +
     `</div>` +
     `<div class="map-dist-stats__row">` +
       `<span class="map-dist-stats__lbl">Avg</span>` +
@@ -806,7 +959,8 @@ function renderDistanceStats() {
       `<span class="map-dist-stats__lbl">Max</span>` +
       `<span class="map-dist-stats__val">${fmtKm(maxEntry.d)}</span>` +
       `<span class="map-dist-stats__dir">${maxCard}</span>` +
-      `<span class="map-dist-stats__ac">${esc(maxLabel.toUpperCase())}</span>` +
+      `<span class="map-dist-stats__ac map-dist-stats__ac--link" data-key="${esc(maxEntry.key)}">${esc(maxLabel.toUpperCase())}</span>` +
+      (maxBand ? `<span class="map-dist-stats__band">${maxBand}</span>` : '') +
     `</div>` +
     (bearings.length > 1
       ? `<div class="map-dist-stats__row map-dist-stats__row--arc">` +
@@ -817,6 +971,21 @@ function renderDistanceStats() {
     `</div>`;
 
   distStatsControl._div.innerHTML = html;
+
+  // Make callsign labels clickable — select the aircraft and pan to it
+  distStatsControl._div.querySelectorAll('.map-dist-stats__ac--link').forEach(el => {
+    L.DomEvent.on(el, 'click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      const key = el.dataset.key;
+      if (!key) return;
+      selectAircraft(key);
+      const marker = aircraftMarkers[key];
+      if (marker) hfdlMap.panTo(marker.getLatLng());
+    });
+  });
+
+  // Keep the coverage arc in sync with visible aircraft
+  updateArcLayer();
 }
 
 /**
@@ -862,9 +1031,10 @@ function placeReceiverMarker(info) {
     receiverMarker.on('mouseout',  () => receiverMarker.closePopup());
   }
 
-  // Now that we have a receiver position, render distance stats for any
+  // Now that we have a receiver position, render distance stats and arc for any
   // aircraft that were already on the map before the receiver was known.
   renderDistanceStats();
+  updateArcLayer();
 }
 
 function initMap() {

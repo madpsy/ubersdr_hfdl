@@ -862,6 +862,25 @@ td.empty {
   min-width: 0;
 }
 
+.map-dist-stats__ac--link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.map-dist-stats__ac--link:hover {
+  color: var(--accent);
+}
+
+.map-dist-stats__band {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: #d2a8ff;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* ---- Map frequency band filter control ---- */
 
 .map-freqband-ctrl {
@@ -881,6 +900,32 @@ td.empty {
   font-size: 11px;
   color: var(--muted);
   font-style: italic;
+}
+
+.map-freqband-ctrl__actions {
+  display: flex;
+  gap: 5px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+}
+
+.map-freqband-ctrl__btn {
+  flex: 1;
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  border-radius: 3px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 0;
+  cursor: pointer;
+  transition: background 0.15s;
+  user-select: none;
+}
+
+.map-freqband-ctrl__btn:hover {
+  background: rgba(88, 166, 255, 0.22);
 }
 
 /* ---- Instances tab ---- */
