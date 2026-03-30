@@ -474,7 +474,7 @@ function renderLiveActivity() {
 const freqBandFilter = {};
 
 let freqBandControl = null;
-let showLiveActivity = true; // toggled by the "Live" checkbox in the freq-band header
+let showLiveActivity = false; // toggled by the "Live" checkbox in the freq-band header
 
 /** Return the MHz band integer for a kHz frequency value. */
 function freqBand(freqKhz) {
@@ -588,6 +588,8 @@ function renderFreqBandControl() {
         return div;
       };
       liveActivityControl.addTo(hfdlMap);
+      // Hidden by default — matches showLiveActivity initial state
+      liveActivityControl.getContainer().style.display = 'none';
       renderLiveActivity();
     }
   }
