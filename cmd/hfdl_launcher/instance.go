@@ -226,13 +226,18 @@ func (inst *instance) start() error {
 			time.Sleep(10 * time.Second)
 			inst.mu.Lock()
 			stillStopping := inst.stopping
-			if !stillStopping {
-				inst.reconnections++
-			}
 			inst.mu.Unlock()
 			if !stillStopping {
 				if err := inst.start(); err != nil {
 					log.Printf("[%d kHz / %s] restart failed: %v", inst.group.centerKHz, inst.group.iqMode, err)
+				} else {
+					// Only count a reconnection when the pipeline actually comes
+					// back up successfully.  This avoids inflating the counter
+					// during a prolonged outage where every 10-second retry
+					// attempt fails immediately.
+					inst.mu.Lock()
+					inst.reconnections++
+					inst.mu.Unlock()
 				}
 			}
 		}
