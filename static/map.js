@@ -628,35 +628,41 @@ function solarDeclination(date) {
 function nightPolygon(date) {
   const decl = solarDeclination(date);
 
-  // UTC hour fraction → solar hour angle of the anti-solar point (night centre)
+  // UTC hour fraction → longitude of the sub-solar point
   const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
-  // Longitude of the sub-solar point
   const solarLon = (180 - utcHours * 15) % 360;
 
-  const pts = [];
+  // Build the terminator line from lon -180 → +180
   const STEPS = 360;
+  const terminator = [];
   for (let i = 0; i <= STEPS; i++) {
     const lon = -180 + (360 * i / STEPS);
-    // Hour angle at this longitude relative to the sub-solar point
-    const ha = (lon - solarLon) * (Math.PI / 180);
-    // Latitude of the terminator: cos(ha)*cos(decl)*cos(lat) + sin(decl)*sin(lat) = 0
-    // → tan(lat) = -cos(ha)*cos(decl) / sin(decl)
+    const ha  = (lon - solarLon) * (Math.PI / 180);
     let lat;
     if (Math.abs(Math.sin(decl)) < 1e-10) {
-      // Near equinox — terminator is a meridian; use ±90 fallback
       lat = (Math.cos(ha) >= 0) ? 90 : -90;
     } else {
       lat = Math.atan(-Math.cos(ha) * Math.cos(decl) / Math.sin(decl)) * (180 / Math.PI);
     }
-    pts.push([lat, lon]);
+    terminator.push([lat, lon]);
   }
 
-  // Close over the night pole (the pole that is in darkness)
+  // The night-side polygon:
+  //   terminator line (west→east) + cap over the night pole
+  // Using explicit pole corners avoids antimeridian clipping issues.
   const nightPole = decl > 0 ? -90 : 90;
-  pts.push([nightPole, 180]);
-  pts.push([nightPole, -180]);
 
-  return pts;
+  const ring = [
+    ...terminator,
+    // Walk the night-pole cap: east edge → pole → west edge
+    [nightPole,  180],
+    [nightPole,    0],
+    [nightPole, -180],
+    // Close back to start
+    terminator[0],
+  ];
+
+  return ring;
 }
 
 function updateGreyline() {
