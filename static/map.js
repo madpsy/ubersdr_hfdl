@@ -401,6 +401,10 @@ const ACTIVITY_TICK_MS   =    400; // redraw interval
 // Array of { band: int, ts: number } — one entry per received message.
 const activityEvents = [];
 
+// Set of all MHz bands ever seen — grows monotonically so the overlay height
+// stays stable once a band has appeared (shows 0 when the window is empty).
+const seenActivityBands = new Set();
+
 let liveActivityControl = null;
 
 /**
@@ -411,6 +415,7 @@ function recordBandActivity(freqKhz) {
   if (!freqKhz) return;
   const band = Math.floor(freqKhz / 1000);
   activityEvents.push({ band, ts: Date.now() });
+  seenActivityBands.add(band);
 }
 
 /** Prune events older than ACTIVITY_WINDOW_MS and re-render the control. */
@@ -427,31 +432,33 @@ function renderLiveActivity() {
   if (!hfdlMap || !liveActivityControl) return;
 
   // Aggregate counts per band from the current window
-  const bandCounts = new Map(); // band → count
+  const bandCounts = new Map(); // band → count (only bands with activity this window)
   for (const { band } of activityEvents) {
     bandCounts.set(band, (bandCounts.get(band) || 0) + 1);
   }
 
-  // Build HTML
+  // Build HTML — always render all ever-seen bands so height stays stable
   const total = activityEvents.length;
   let html = `<div class="map-live-activity">` +
     `<div class="map-live-activity__title">Live activity` +
     `<span class="map-live-activity__window">10 s</span></div>`;
 
-  if (bandCounts.size === 0) {
+  if (seenActivityBands.size === 0) {
     html += `<div class="map-live-activity__empty">No messages yet</div>`;
   } else {
-    const sorted = [...bandCounts.entries()].sort((a, b) => a[0] - b[0]);
-    const maxCount = Math.max(...sorted.map(([, c]) => c));
-    for (const [band, count] of sorted) {
+    const maxCount = bandCounts.size > 0 ? Math.max(...bandCounts.values()) : 0;
+    const sorted = [...seenActivityBands].sort((a, b) => a - b);
+    for (const band of sorted) {
+      const count = bandCounts.get(band) || 0;
       const widthPct = maxCount > 0 ? Math.max(3, Math.round((count / maxCount) * 100)) : 0;
+      const dimCls = count === 0 ? ' map-live-activity__row--dim' : '';
       html +=
-        `<div class="map-live-activity__row">` +
-          `<span class="map-live-activity__label">${band}</span>` +
+        `<div class="map-live-activity__row${dimCls}">` +
+          `<span class="map-live-activity__label">${band} MHz</span>` +
           `<div class="map-live-activity__track">` +
-            `<div class="map-live-activity__fill" style="width:${widthPct}%"></div>` +
+            `<div class="map-live-activity__fill" style="width:${count > 0 ? widthPct : 0}%"></div>` +
           `</div>` +
-          `<span class="map-live-activity__count">${count}</span>` +
+          `<span class="map-live-activity__count">${count > 0 ? count : ''}</span>` +
         `</div>`;
     }
     html += `<div class="map-live-activity__total">${total} msg / 10 s</div>`;
