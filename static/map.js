@@ -266,27 +266,41 @@ function destinationPoint(lat, lon, radiusKm, bearingDeg) {
 }
 
 /**
- * Build a closed polygon representing a sector (pie slice) from the receiver.
- * startBearing and endBearing are in degrees (0–360), going clockwise.
- * The arc sweeps from startBearing to endBearing in the clockwise direction.
+ * Build a radar-footprint polygon centred on the receiver.
+ *
+ * Strategy: divide 360° into STEPS equal slices. For each slice, find the
+ * furthest visible aircraft whose bearing falls within ±halfWidth of the
+ * slice centre. If no aircraft falls in that slice, use a small fallback
+ * radius so the polygon stays connected to the receiver area.
+ *
+ * The result is a spiky, organic closed shape that bulges out toward every
+ * aircraft and pulls back where there are none — every aircraft is guaranteed
+ * to be inside or on the boundary.
  */
-function buildArcPolygon(lat, lon, radiusKm, startBearing, endBearing) {
-  const STEPS = 64;
-  // Normalise so we always sweep clockwise from start to end
-  let sweep = ((endBearing - startBearing) + 360) % 360;
-  if (sweep === 0) sweep = 360; // full circle
+function buildRadarFootprint(rxLat, rxLon, acList) {
+  const STEPS     = 72;   // one point every 5°
+  const HALF_W    = 10;   // ±10° search window per slice
+  const FALLBACK  = 50;   // km — minimum radius when no aircraft in slice
 
-  const pts = [[lat, lon]]; // start at receiver
-  for (let i = 0; i <= STEPS; i++) {
-    const bearing = (startBearing + (sweep * i / STEPS)) % 360;
-    pts.push(destinationPoint(lat, lon, radiusKm, bearing));
+  const pts = [];
+  for (let i = 0; i < STEPS; i++) {
+    const centreBearing = (360 * i / STEPS);
+    let maxD = FALLBACK;
+
+    for (const { d, b } of acList) {
+      // Angular difference, wrapped to [-180, 180]
+      let diff = ((b - centreBearing) + 540) % 360 - 180;
+      if (Math.abs(diff) <= HALF_W && d > maxD) maxD = d;
+    }
+
+    pts.push(destinationPoint(rxLat, rxLon, maxD, centreBearing));
   }
-  pts.push([lat, lon]); // close back to receiver
   return pts;
 }
 
 /**
- * Recompute and redraw the coverage arc based on currently visible aircraft.
+ * Recompute and redraw the radar-footprint coverage polygon based on
+ * currently visible aircraft.
  * Called from renderDistanceStats() and placeReceiverMarker().
  */
 function updateArcLayer() {
@@ -295,42 +309,24 @@ function updateArcLayer() {
     return;
   }
 
-  // Collect bearings and max distance from visible aircraft
-  const bearings  = [];
-  let   maxDistKm = 0;
-
+  // Collect {d, b} for every visible aircraft
+  const acList = [];
   for (const [key, ac] of Object.entries(aircraftData)) {
     if (!ac.lat || !ac.lon) continue;
     const marker = aircraftMarkers[key];
     if (!marker || !hfdlMap.hasLayer(marker)) continue;
     const d = distanceToReceiverKm(ac.lat, ac.lon);
     const b = bearingToReceiver(ac.lat, ac.lon);
-    if (d !== null && d > maxDistKm) maxDistKm = d;
-    if (b !== null) bearings.push(b);
+    if (d !== null && b !== null) acList.push({ d, b });
   }
 
-  if (bearings.length === 0 || maxDistKm === 0) {
+  if (acList.length === 0) {
     if (arcLayer) { arcLayer.remove(); arcLayer = null; }
     return;
   }
 
-  // Find the start/end of the coverage arc (smallest clockwise arc covering all bearings)
-  const sorted = [...bearings].sort((a, b) => a - b);
-  let maxGap = (sorted[0] + 360) - sorted[sorted.length - 1];
-  let gapAfterIdx = sorted.length - 1; // index after which the largest gap starts
-  for (let i = 1; i < sorted.length; i++) {
-    const gap = sorted[i] - sorted[i - 1];
-    if (gap > maxGap) { maxGap = gap; gapAfterIdx = i - 1; }
-  }
-
-  // Arc starts just after the largest gap
-  const startBearing = sorted[(gapAfterIdx + 1) % sorted.length];
-  const endBearing   = sorted[gapAfterIdx];
-
-  const pts = buildArcPolygon(
-    receiverLatLng[0], receiverLatLng[1],
-    maxDistKm,
-    startBearing, endBearing
+  const pts = buildRadarFootprint(
+    receiverLatLng[0], receiverLatLng[1], acList
   );
 
   if (arcLayer) {
@@ -339,11 +335,11 @@ function updateArcLayer() {
     arcLayer = L.polygon(pts, {
       color:       '#58a6ff',
       weight:      1.5,
-      opacity:     0.6,
+      opacity:     0.55,
       fillColor:   '#58a6ff',
-      fillOpacity: 0.08,
+      fillOpacity: 0.07,
       interactive: false,
-      dashArray:   '4 4',
+      dashArray:   '5 4',
     });
     if (showArcLayer) arcLayer.addTo(hfdlMap);
   }
