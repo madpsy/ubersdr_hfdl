@@ -911,6 +911,7 @@ function renderDistanceStats() {
 
   if (distances.length === 0) {
     distStatsControl._div.innerHTML = '';
+    updateArcLayer();
     return;
   }
 
