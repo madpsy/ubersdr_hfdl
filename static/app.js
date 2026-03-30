@@ -701,6 +701,11 @@ function renderSignalCharts(series) {
   if (!container) return;
 
   if (!Array.isArray(series) || series.length === 0) {
+    // Destroy all existing charts before clearing the DOM
+    for (const [key, ch] of Object.entries(signalCharts)) {
+      ch.destroy();
+      delete signalCharts[key];
+    }
     container.innerHTML = '<p id="signal-empty">No signal history yet — data accumulates in 30-minute buckets.</p>';
     return;
   }
@@ -709,6 +714,9 @@ function renderSignalCharts(series) {
   const empty = container.querySelector('#signal-empty');
   if (empty) empty.remove();
 
+  // Build a set of keys present in the new response so we can detect stale charts
+  const incomingKeys = new Set();
+
   // Group series by gs_id, preserving insertion order
   const groups = new Map(); // gs_id → { location, items: [s, …] }
   for (const s of series) {
@@ -716,7 +724,26 @@ function renderSignalCharts(series) {
       groups.set(s.gs_id, { location: s.location, items: [] });
     }
     groups.get(s.gs_id).items.push(s);
+    incomingKeys.add(`${s.gs_id}:${s.freq_khz}`);
   }
+
+  // Destroy and remove any charts whose GS/frequency is no longer in the response
+  for (const [key, ch] of Object.entries(signalCharts)) {
+    if (!incomingKeys.has(key)) {
+      ch.destroy();
+      delete signalCharts[key];
+      // Remove the card element from the DOM
+      const card = container.querySelector(`.sig-chart-card[data-key="${CSS.escape(key)}"]`);
+      if (card) card.remove();
+    }
+  }
+
+  // Remove group sections that are now empty (all their charts were removed)
+  container.querySelectorAll('.sig-group').forEach(groupEl => {
+    if (groupEl.querySelector('.sig-group__grid').children.length === 0) {
+      groupEl.remove();
+    }
+  });
 
   for (const [gsId, group] of groups) {
     // Ensure a group section exists for this GS
@@ -747,7 +774,7 @@ function renderSignalCharts(series) {
       const maxData = s.buckets.map(b => b.max);
 
       if (signalCharts[key]) {
-        // Update existing chart
+        // Update existing chart in-place
         const ch = signalCharts[key];
         ch.data.labels = labels;
         ch.data.datasets[0].data = avgData;

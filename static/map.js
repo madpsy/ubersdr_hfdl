@@ -61,6 +61,9 @@ const posHistory  = []; // [{key, label, gsId, time, posCount}] newest-first
 let historyControl = null;
 let historyTickTimer = null;
 
+// ---- Max track points kept in the live-track polyline ----------------------
+const MAX_TRACK_POINTS = 500;
+
 function acLabel(ac) {
   return (ac.flight || ac.reg || ac.icao || ac.key || '').toUpperCase();
 }
@@ -115,6 +118,20 @@ function renderHistory() {
       this._div = L.DomUtil.create('div', '');
       L.DomEvent.disableClickPropagation(this._div);
       L.DomEvent.disableScrollPropagation(this._div);
+
+      // Single delegated click listener on the stable container — set up once,
+      // never re-attached, so it cannot accumulate on every renderHistory() call.
+      L.DomEvent.on(this._div, 'click', (e) => {
+        const row = e.target.closest('.map-history__row--clickable');
+        if (!row) return;
+        L.DomEvent.stopPropagation(e);
+        const key = row.dataset.key;
+        if (!key) return;
+        selectAircraft(key);
+        const marker = aircraftMarkers[key];
+        if (marker) hfdlMap.panTo(marker.getLatLng());
+      });
+
       return this._div;
     };
     historyControl.addTo(hfdlMap);
@@ -122,21 +139,8 @@ function renderHistory() {
     // Tick every second to keep time-ago strings real-time
     historyTickTimer = setInterval(renderHistory, 1_000);
   }
+  // Only update the HTML — the delegated listener on the container persists.
   historyControl._div.innerHTML = html;
-
-  // Attach click handlers to clickable rows.
-  // Use L.DomEvent.on() so clicks are received even though
-  // disableClickPropagation() is set on the parent container.
-  historyControl._div.querySelectorAll('.map-history__row--clickable').forEach(row => {
-    L.DomEvent.on(row, 'click', (e) => {
-      L.DomEvent.stopPropagation(e);
-      const key = row.dataset.key;
-      if (!key) return;
-      selectAircraft(key);
-      const marker = aircraftMarkers[key];
-      if (marker) hfdlMap.panTo(marker.getLatLng());
-    });
-  });
 }
 
 // ---- Legend control --------------------------------------------------------
@@ -178,33 +182,32 @@ function renderLegend() {
     legendControl.onAdd = function () {
       this._div = L.DomUtil.create('div', '');
       L.DomEvent.disableClickPropagation(this._div);
+
+      // Single delegated click listener on the stable container — set up once,
+      // never re-attached on each renderLegend() call.
+      L.DomEvent.on(this._div, 'click', (e) => {
+        const row = e.target.closest('.map-legend__row--clickable');
+        if (!row) return;
+        L.DomEvent.stopPropagation(e);
+        const gsId = parseInt(row.dataset.gsId, 10);
+        if (selectedGS === gsId) {
+          deselectGS();
+          renderLegend();
+        } else {
+          selectGS(gsId);
+          renderLegend();
+          // Pan to the GS marker if it exists
+          const marker = gsMarkers[gsId];
+          if (marker) hfdlMap.panTo(marker.getLatLng());
+        }
+      });
+
       return this._div;
     };
     legendControl.addTo(hfdlMap);
   }
+  // Only update the HTML — the delegated listener on the container persists.
   legendControl._div.innerHTML = html;
-
-  // Attach click handlers to legend rows.
-  // Use L.DomEvent.on() rather than addEventListener so that clicks are
-  // correctly received even though disableClickPropagation() is set on the
-  // parent container (native addEventListener can be swallowed in some
-  // Leaflet builds when propagation is stopped at the container level).
-  legendControl._div.querySelectorAll('.map-legend__row--clickable').forEach(row => {
-    L.DomEvent.on(row, 'click', (e) => {
-      L.DomEvent.stopPropagation(e);
-      const gsId = parseInt(row.dataset.gsId, 10);
-      if (selectedGS === gsId) {
-        deselectGS();
-        renderLegend();
-      } else {
-        selectGS(gsId);
-        renderLegend();
-        // Pan to the GS marker if it exists
-        const marker = gsMarkers[gsId];
-        if (marker) hfdlMap.panTo(marker.getLatLng());
-      }
-    });
-  });
 }
 
 // ---- Icon builder ----------------------------------------------------------
@@ -415,8 +418,8 @@ function renderFreqBandControl() {
     }
     html +=
       `<div class="map-freqband-ctrl__actions">` +
-      `<button class="map-freqband-ctrl__btn" id="freqband-all">All</button>` +
-      `<button class="map-freqband-ctrl__btn" id="freqband-none">None</button>` +
+      `<button class="map-freqband-ctrl__btn" data-freqband-action="all">All</button>` +
+      `<button class="map-freqband-ctrl__btn" data-freqband-action="none">None</button>` +
       `</div>`;
   }
 
@@ -426,39 +429,33 @@ function renderFreqBandControl() {
       const div = L.DomUtil.create('div', 'map-layer-ctrl map-freqband-ctrl');
       L.DomEvent.disableClickPropagation(div);
       L.DomEvent.disableScrollPropagation(div);
+
+      // Single delegated change listener for checkboxes — set up once on the
+      // stable container so it is never re-attached on each render call.
+      div.addEventListener('change', (e) => {
+        if (!e.target.classList.contains('freqband-cb')) return;
+        const band = parseInt(e.target.dataset.band, 10);
+        freqBandFilter[band] = e.target.checked;
+        applyBandFilter();
+      });
+
+      // Single delegated click listener for All / None buttons.
+      div.addEventListener('click', (e) => {
+        const action = e.target.dataset.freqbandAction;
+        if (!action) return;
+        const enable = action === 'all';
+        for (const band of Object.keys(freqBandFilter)) freqBandFilter[band] = enable;
+        applyBandFilter();
+        renderFreqBandControl();
+      });
+
       return div;
     };
     freqBandControl.addTo(hfdlMap);
   }
 
+  // Only update the HTML — the delegated listeners on the container persist.
   freqBandControl.getContainer().innerHTML = html;
-
-  // Attach checkbox change handlers
-  freqBandControl.getContainer().querySelectorAll('.freqband-cb').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      const band = parseInt(e.target.dataset.band, 10);
-      freqBandFilter[band] = e.target.checked;
-      applyBandFilter();
-    });
-  });
-
-  // All / None buttons
-  const allBtn  = freqBandControl.getContainer().querySelector('#freqband-all');
-  const noneBtn = freqBandControl.getContainer().querySelector('#freqband-none');
-  if (allBtn) {
-    allBtn.addEventListener('click', () => {
-      for (const band of Object.keys(freqBandFilter)) freqBandFilter[band] = true;
-      applyBandFilter();
-      renderFreqBandControl();
-    });
-  }
-  if (noneBtn) {
-    noneBtn.addEventListener('click', () => {
-      for (const band of Object.keys(freqBandFilter)) freqBandFilter[band] = false;
-      applyBandFilter();
-      renderFreqBandControl();
-    });
-  }
 }
 
 /** Show/hide all aircraft markers according to the current band filter and showPlanes state. */
@@ -947,6 +944,45 @@ function renderDistanceStats() {
     distStatsControl.onAdd = function () {
       this._div = L.DomUtil.create('div', '');
       L.DomEvent.disableClickPropagation(this._div);
+
+      // Delegated click: select aircraft and pan to it.
+      L.DomEvent.on(this._div, 'click', (e) => {
+        const el = e.target.closest('.map-dist-stats__ac--link');
+        if (!el) return;
+        L.DomEvent.stopPropagation(e);
+        const key = el.dataset.key;
+        if (!key) return;
+        selectAircraft(key);
+        const marker = aircraftMarkers[key];
+        if (marker) hfdlMap.panTo(marker.getLatLng());
+      });
+
+      // Delegated mouseover: show popup and range line.
+      L.DomEvent.on(this._div, 'mouseover', (e) => {
+        const el = e.target.closest('.map-dist-stats__ac--link');
+        if (!el) return;
+        const key = el.dataset.key;
+        if (!key) return;
+        const marker = aircraftMarkers[key];
+        const ac = aircraftData[key];
+        if (marker && ac) {
+          marker.setPopupContent(buildPopup(ac));
+          showRxLine(ac.lat, ac.lon);
+          marker.openPopup();
+        }
+      });
+
+      // Delegated mouseout: close popup and hide range line.
+      L.DomEvent.on(this._div, 'mouseout', (e) => {
+        const el = e.target.closest('.map-dist-stats__ac--link');
+        if (!el) return;
+        const key = el.dataset.key;
+        if (!key) return;
+        const marker = aircraftMarkers[key];
+        if (marker) marker.closePopup();
+        hideRxLine();
+      });
+
       return this._div;
     };
     distStatsControl.addTo(hfdlMap);
@@ -1023,37 +1059,8 @@ function renderDistanceStats() {
 
   distStatsControl._div.innerHTML = html;
 
-  // Make callsign labels clickable (select + pan) and hoverable (open popup)
-  distStatsControl._div.querySelectorAll('.map-dist-stats__ac--link').forEach(el => {
-    L.DomEvent.on(el, 'click', (e) => {
-      L.DomEvent.stopPropagation(e);
-      const key = el.dataset.key;
-      if (!key) return;
-      selectAircraft(key);
-      const marker = aircraftMarkers[key];
-      if (marker) hfdlMap.panTo(marker.getLatLng());
-    });
-
-    L.DomEvent.on(el, 'mouseover', () => {
-      const key = el.dataset.key;
-      if (!key) return;
-      const marker = aircraftMarkers[key];
-      const ac = aircraftData[key];
-      if (marker && ac) {
-        marker.setPopupContent(buildPopup(ac));
-        showRxLine(ac.lat, ac.lon);
-        marker.openPopup();
-      }
-    });
-
-    L.DomEvent.on(el, 'mouseout', () => {
-      const key = el.dataset.key;
-      if (!key) return;
-      const marker = aircraftMarkers[key];
-      if (marker) marker.closePopup();
-      hideRxLine();
-    });
-  });
+  // Delegated listeners are attached once when the control is first created
+  // (see distStatsControl.onAdd below). Nothing to attach here on each render.
 
   // Keep the coverage arc in sync with visible aircraft
   updateArcLayer();
@@ -1249,10 +1256,12 @@ function upsertMarker(ac, fromSSE = false) {
     }
   }
 
-  // If this is the selected aircraft, extend the live track polyline
+  // If this is the selected aircraft, extend the live track polyline.
+  // Cap at MAX_TRACK_POINTS to prevent unbounded memory growth.
   if (selected && trackPolyline) {
     const latlngs = trackPolyline.getLatLngs();
     latlngs.push(L.latLng(ac.lat, ac.lon));
+    if (latlngs.length > MAX_TRACK_POINTS) latlngs.splice(0, latlngs.length - MAX_TRACK_POINTS);
     trackPolyline.setLatLngs(latlngs);
   }
 
