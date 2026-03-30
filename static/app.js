@@ -614,107 +614,134 @@ function renderSignalCharts(series) {
   const empty = container.querySelector('#signal-empty');
   if (empty) empty.remove();
 
+  // Group series by gs_id, preserving insertion order
+  const groups = new Map(); // gs_id → { location, items: [s, …] }
   for (const s of series) {
-    const key = `${s.gs_id}:${s.freq_khz}`;
-    const labels = s.buckets.map(b => {
-      const d = new Date(b.t * 1000);
-      return d.toUTCString().slice(17, 22); // "HH:MM"
-    });
-    const avgData = s.buckets.map(b => b.avg);
-    const minData = s.buckets.map(b => b.min);
-    const maxData = s.buckets.map(b => b.max);
-
-    if (signalCharts[key]) {
-      // Update existing chart
-      const ch = signalCharts[key];
-      ch.data.labels = labels;
-      ch.data.datasets[0].data = avgData;
-      ch.data.datasets[1].data = minData;
-      ch.data.datasets[2].data = maxData;
-      ch.update('none');
-      continue;
+    if (!groups.has(s.gs_id)) {
+      groups.set(s.gs_id, { location: s.location, items: [] });
     }
-
-    // Create card + canvas
-    const card = document.createElement('div');
-    card.className = 'sig-chart-card';
-    card.dataset.key = key;
-    card.innerHTML =
-      `<div class="sig-chart-card__title">${esc(s.location)}</div>` +
-      `<div class="sig-chart-card__subtitle">${(s.freq_khz / 1000).toFixed(3)} MHz · GS ${s.gs_id}</div>` +
-      `<canvas id="sig-canvas-${key.replace(':', '-')}"></canvas>`;
-    container.appendChild(card);
-
-    const canvas = card.querySelector('canvas');
-    const chart = new Chart(canvas, {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [
-          {
-            label: 'Avg (dBFS)',
-            data: avgData,
-            borderColor: '#58a6ff',
-            backgroundColor: 'rgba(88,166,255,0.12)',
-            borderWidth: 2,
-            pointRadius: 2,
-            tension: 0.3,
-            fill: false,
-          },
-          {
-            label: 'Min',
-            data: minData,
-            borderColor: '#f78166',
-            borderWidth: 1,
-            borderDash: [4, 3],
-            pointRadius: 2,
-            tension: 0.3,
-            fill: false,
-          },
-          {
-            label: 'Max',
-            data: maxData,
-            borderColor: '#3fb950',
-            borderWidth: 1,
-            borderDash: [4, 3],
-            pointRadius: 2,
-            tension: 0.3,
-            fill: false,
-          },
-        ],
-      },
-      options: {
-        animation: false,
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            labels: { color: '#c9d1d9', font: { size: 11 } },
-          },
-          tooltip: {
-            callbacks: {
-              label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} dBFS`,
-            },
-          },
-        },
-        scales: {
-          x: {
-            ticks: { color: '#8b949e', font: { size: 10 }, maxRotation: 0 },
-            grid:  { color: 'rgba(48,54,61,0.8)' },
-          },
-          y: {
-            ticks: {
-              color: '#8b949e',
-              font: { size: 10 },
-              callback: v => v.toFixed(0) + ' dB',
-            },
-            grid: { color: 'rgba(48,54,61,0.8)' },
-          },
-        },
-      },
-    });
-    signalCharts[key] = chart;
+    groups.get(s.gs_id).items.push(s);
   }
+
+  for (const [gsId, group] of groups) {
+    // Ensure a group section exists for this GS
+    const groupId = `sig-group-${gsId}`;
+    let groupEl = container.querySelector(`#${groupId}`);
+    if (!groupEl) {
+      groupEl = document.createElement('div');
+      groupEl.className = 'sig-group';
+      groupEl.id = groupId;
+      groupEl.innerHTML =
+        `<div class="sig-group__header">` +
+          `<span class="sig-group__name">${esc(group.location)}</span>` +
+          `<span class="sig-group__id">GS ${gsId}</span>` +
+        `</div>` +
+        `<div class="sig-group__grid"></div>`;
+      container.appendChild(groupEl);
+    }
+    const grid = groupEl.querySelector('.sig-group__grid');
+
+    for (const s of group.items) {
+      const key = `${s.gs_id}:${s.freq_khz}`;
+      const labels = s.buckets.map(b => {
+        const d = new Date(b.t * 1000);
+        return d.toUTCString().slice(17, 22); // "HH:MM"
+      });
+      const avgData = s.buckets.map(b => b.avg);
+      const minData = s.buckets.map(b => b.min);
+      const maxData = s.buckets.map(b => b.max);
+
+      if (signalCharts[key]) {
+        // Update existing chart
+        const ch = signalCharts[key];
+        ch.data.labels = labels;
+        ch.data.datasets[0].data = avgData;
+        ch.data.datasets[1].data = minData;
+        ch.data.datasets[2].data = maxData;
+        ch.update('none');
+        continue;
+      }
+
+      // Create card + canvas inside the group grid
+      const card = document.createElement('div');
+      card.className = 'sig-chart-card';
+      card.dataset.key = key;
+      card.innerHTML =
+        `<div class="sig-chart-card__title">${(s.freq_khz / 1000).toFixed(3)} MHz</div>` +
+        `<canvas id="sig-canvas-${key.replace(':', '-')}"></canvas>`;
+      grid.appendChild(card);
+
+      const canvas = card.querySelector('canvas');
+      const chart = new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Avg (dBFS)',
+              data: avgData,
+              borderColor: '#58a6ff',
+              backgroundColor: 'rgba(88,166,255,0.12)',
+              borderWidth: 2,
+              pointRadius: 2,
+              tension: 0.3,
+              fill: false,
+            },
+            {
+              label: 'Min',
+              data: minData,
+              borderColor: '#f78166',
+              borderWidth: 1,
+              borderDash: [4, 3],
+              pointRadius: 2,
+              tension: 0.3,
+              fill: false,
+            },
+            {
+              label: 'Max',
+              data: maxData,
+              borderColor: '#3fb950',
+              borderWidth: 1,
+              borderDash: [4, 3],
+              pointRadius: 2,
+              tension: 0.3,
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              labels: { color: '#c9d1d9', font: { size: 11 } },
+            },
+            tooltip: {
+              callbacks: {
+                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} dBFS`,
+              },
+            },
+          },
+          scales: {
+            x: {
+              ticks: { color: '#8b949e', font: { size: 10 }, maxRotation: 0 },
+              grid:  { color: 'rgba(48,54,61,0.8)' },
+            },
+            y: {
+              ticks: {
+                color: '#8b949e',
+                font: { size: 10 },
+                callback: v => v.toFixed(0) + ' dB',
+              },
+              grid: { color: 'rgba(48,54,61,0.8)' },
+            },
+          },
+        },
+      });
+      signalCharts[key] = chart;
+    } // end inner for (group.items)
+  } // end outer for (groups)
 }
 
 // ---- Export active frequencies ---------------------------------------------

@@ -1341,15 +1341,49 @@ td.empty {
 
 #signal-charts {
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Ground-station group */
+.sig-group {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sig-group__header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.sig-group__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.sig-group__id {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+.sig-group__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 1px;
+  background: var(--border);
 }
 
 .sig-chart-card {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
   padding: 14px 16px;
 }
 
@@ -1357,13 +1391,7 @@ td.empty {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
-  margin-bottom: 4px;
-}
-
-.sig-chart-card__subtitle {
-  font-size: 11px;
-  color: var(--muted);
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .sig-chart-card canvas {
