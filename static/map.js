@@ -377,10 +377,15 @@ function isBandVisible(ac) {
 function renderFreqBandControl() {
   if (!hfdlMap) return;
 
-  // Collect all bands present in current aircraft data
-  const bands = new Set();
+  // Collect all bands present in current aircraft data and count aircraft per band
+  const bands    = new Set();
+  const bandCount = {};
   for (const ac of Object.values(aircraftData)) {
-    if (ac.freq_khz) bands.add(freqBand(ac.freq_khz));
+    if (ac.freq_khz) {
+      const b = freqBand(ac.freq_khz);
+      bands.add(b);
+      bandCount[b] = (bandCount[b] || 0) + 1;
+    }
   }
 
   // Register any new bands as visible by default
@@ -399,10 +404,12 @@ function renderFreqBandControl() {
   } else {
     for (const band of sorted) {
       const checked = freqBandFilter[band] !== false ? 'checked' : '';
+      const count   = bandCount[band] || 0;
       html +=
         `<label class="map-layer-ctrl__row">` +
         `<input type="checkbox" class="freqband-cb" data-band="${band}" ${checked}>` +
         `<span>${band} MHz</span>` +
+        `<span class="map-freqband-ctrl__count">${count}</span>` +
         `</label>`;
     }
     html +=
@@ -935,6 +942,10 @@ function renderDistanceStats() {
   const minEntry = distances[0];
   const maxEntry = distances[distances.length - 1];
   const avgD = distances.reduce((s, e) => s + e.d, 0) / distances.length;
+  const mid  = Math.floor(distances.length / 2);
+  const medD = distances.length % 2 === 1
+    ? distances[mid].d
+    : (distances[mid - 1].d + distances[mid].d) / 2;
 
   const minCard = minEntry.b != null ? bearingToCardinal(minEntry.b) : '—';
   const maxCard = maxEntry.b != null ? bearingToCardinal(maxEntry.b) : '—';
@@ -971,6 +982,9 @@ function renderDistanceStats() {
     `<div class="map-dist-stats__row">` +
       `<span class="map-dist-stats__lbl">Avg</span>` +
       `<span class="map-dist-stats__val">${fmtKm(avgD)}</span>` +
+      `<span class="map-dist-stats__sep">·</span>` +
+      `<span class="map-dist-stats__lbl">Med</span>` +
+      `<span class="map-dist-stats__val">${fmtKm(medD)}</span>` +
     `</div>` +
     `<div class="map-dist-stats__row">` +
       `<span class="map-dist-stats__lbl">Max</span>` +

@@ -845,6 +845,13 @@ td.empty {
   flex-shrink: 0;
 }
 
+.map-dist-stats__sep {
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
 .map-dist-stats__dir {
   font-size: 11px;
   font-weight: 600;
@@ -926,6 +933,25 @@ td.empty {
 
 .map-freqband-ctrl__btn:hover {
   background: rgba(88, 166, 255, 0.22);
+}
+
+/* Push the count badge to the far right inside freq-band rows */
+.map-freqband-ctrl .map-layer-ctrl__row {
+  justify-content: space-between;
+}
+
+.map-freqband-ctrl__count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  background: rgba(255,255,255,0.07);
+  border-radius: 8px;
+  padding: 0 5px;
+  min-width: 16px;
+  text-align: center;
+  line-height: 15px;
+  flex-shrink: 0;
 }
 
 /* ---- Instances tab ---- */
