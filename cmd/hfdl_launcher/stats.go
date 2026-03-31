@@ -491,6 +491,9 @@ type statsStore struct {
 	gsNames        map[int]string             // gs_id → location name (read-only after init)
 	freqGSID       map[int][]int              // freq_khz → []gs_id (read-only after init)
 	stations       []groundStation            // all ground stations sorted by ID (read-only after init)
+	// Slot→ICAO mapping: key "gsID:slotID" → ICAO hex string
+	// Populated on Logon confirm; used to resolve aircraft identity on logoff/data frames.
+	slotMap map[string]string
 	// Phase 2a: SPDU-derived network topology
 	networkGS map[int]*NetworkGSState // gs_id → latest SPDU-advertised state
 	// Phase 4a: propagation paths from freq_data[]
@@ -525,6 +528,7 @@ func newStatsStore(gsNames map[int]string, freqGSID map[int][]int, stations []gr
 		gsNames:        gsNames,
 		freqGSID:       freqGSID,
 		stations:       stations,
+		slotMap:        make(map[string]string),
 		networkGS:      make(map[int]*NetworkGSState),
 		propagation:    make(map[string]*PropPath),
 		subs:           make(map[chan string]struct{}),
@@ -634,6 +638,27 @@ func (s *statsStore) ingest(line string) {
 			icao = h.LPDU.AcInfo.ICAO
 		} else if h.LPDU.Src.AcInfo != nil && h.LPDU.Src.AcInfo.ICAO != "" {
 			icao = h.LPDU.Src.AcInfo.ICAO
+		}
+
+		// Slot→ICAO mapping:
+		// On Logon confirm: store ICAO → slot so we can resolve later frames.
+		// On aircraft frames with no ICAO: look up slot to get ICAO.
+		gsForSlot := 0
+		if h.LPDU.Dst.Type == "Ground station" {
+			gsForSlot = h.LPDU.Dst.ID
+		} else if h.LPDU.Src.Type == "Ground station" {
+			gsForSlot = h.LPDU.Src.ID
+		}
+		if h.LPDU.Type.Name == "Logon confirm" && icao != "" && h.LPDU.AssignedAcID != 0 && gsForSlot != 0 {
+			slotKey := fmt.Sprintf("%d:%d", gsForSlot, h.LPDU.AssignedAcID)
+			s.slotMap[slotKey] = icao
+		}
+		// If src is an aircraft with a slot ID but no ICAO, look up the slot map
+		if icao == "" && h.LPDU.Src.Type == "Aircraft" && h.LPDU.Src.ID != 0 && gsForSlot != 0 {
+			slotKey := fmt.Sprintf("%d:%d", gsForSlot, h.LPDU.Src.ID)
+			if mapped := s.slotMap[slotKey]; mapped != "" {
+				icao = mapped
+			}
 		}
 		reg := ""
 		flight := ""

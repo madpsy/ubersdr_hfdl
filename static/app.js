@@ -481,8 +481,11 @@ function evtDetail(evt) {
     return id || 'Logon confirmed';
   }
   if (evt._evtType === 'logoff') {
-    // reason_descr comes from lpdu.reason.descr (Section 2.3)
-    return esc(evt.reason_descr || evt.reason || '');
+    // reason_descr comes from lpdu.reason.descr (Section 2.3).
+    // Code 6 = "Other" is the standard aircraft-initiated logoff — suppress it
+    // as it's always present and adds no information. Only show non-trivial reasons.
+    const r = evt.reason_descr || evt.reason || '';
+    return (r && r !== 'Other' && r !== 'Reserved') ? esc(r) : '';
   }
   return esc(evt.msg_type || '');
 }
