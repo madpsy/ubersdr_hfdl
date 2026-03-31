@@ -1033,8 +1033,8 @@ function updatePropagationLayer() {
           // Create a new line
           const line = L.polyline(pts, {
             color: '#f0a500',  // amber — visible over both sea and land
-            weight: 1,
-            opacity: 0.6,
+            weight: 1.5,
+            opacity: 0.65,
             dashArray: '8 5',
             interactive: false,
           });
