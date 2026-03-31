@@ -45,6 +45,10 @@ type hfdlMessage struct {
 			Src struct {
 				Type string `json:"type"`
 				ID   int    `json:"id"`
+				// Phase 1a: ICAO is embedded inside src when aircraft is in AC cache
+				AcInfo *struct {
+					ICAO string `json:"icao"`
+				} `json:"ac_info"`
 			} `json:"src"`
 			Dst struct {
 				Type string `json:"type"`
@@ -53,9 +57,16 @@ type hfdlMessage struct {
 			Type struct {
 				Name string `json:"name"`
 			} `json:"type"`
+			// Top-level ac_info (present on logon frames before AC cache is populated)
 			AcInfo *struct {
 				ICAO string `json:"icao"`
 			} `json:"ac_info"`
+			// Section 2.3: logon/logoff detail fields
+			AssignedAcID int `json:"assigned_ac_id"`
+			Reason       *struct {
+				Code  int    `json:"code"`
+				Descr string `json:"descr"`
+			} `json:"reason"`
 			HFNPDU *struct {
 				Type struct {
 					ID int `json:"id"`
@@ -67,11 +78,56 @@ type hfdlMessage struct {
 					Lat float64 `json:"lat"`
 					Lon float64 `json:"lon"`
 				} `json:"pos"`
+				// Phase 1b: full ACARS payload including msg_text
 				ACARS *struct {
-					Reg    string `json:"reg"`
-					Flight string `json:"flight"`
-					Label  string `json:"label"`
+					Reg      string `json:"reg"`
+					Flight   string `json:"flight"`
+					Label    string `json:"label"`
+					Sublabel string `json:"sublabel"`
+					MsgText  string `json:"msg_text"`
+					// Phase 3c: media-adv current_link
+					MediaAdv *struct {
+						CurrentLink *struct {
+							Code string `json:"code"`
+							Name string `json:"name"`
+						} `json:"current_link"`
+					} `json:"media-adv"`
+					// Section 2.6.4: ADS-C position contracts via libacars
+					ARINC622 *struct {
+						ADSC *struct {
+							Tags []struct {
+								BasicReport *struct {
+									Lat float64 `json:"lat"`
+									Lon float64 `json:"lon"`
+									Alt float64 `json:"alt"` // feet
+								} `json:"basic_report"`
+								FlightID *struct {
+									ID string `json:"id"`
+								} `json:"flight_id"`
+							} `json:"tags"`
+						} `json:"adsc"`
+					} `json:"arinc622"`
 				} `json:"acars"`
+				// Phase 3a: last frequency change cause
+				LastFreqChangeCause string `json:"last_freq_change_cause"`
+				// Phase 3b: PDU error statistics
+				PDUStats *struct {
+					MPDU *struct {
+						Rx  int `json:"rx"`
+						Tx  int `json:"tx"`
+						Err int `json:"err"`
+					} `json:"mpdu"`
+				} `json:"pdu_stats"`
+				// Phase 3d: aircraft-reported time (Performance Data uses "time",
+				// Frequency Data uses "utc_time" — both are unix seconds)
+				Time *struct {
+					Sec int64 `json:"sec"`
+				} `json:"time"`
+				UTCTime *struct {
+					Sec int64 `json:"sec"`
+				} `json:"utc_time"`
+				// Phase 4a: propagation data from Frequency Data messages (type 213)
+				FreqData []freqDataEntry `json:"freq_data"`
 			} `json:"hfnpdu"`
 		} `json:"lpdu"`
 		SPDU *struct {
@@ -79,7 +135,18 @@ type hfdlMessage struct {
 				Type string `json:"type"`
 				ID   int    `json:"id"`
 			} `json:"src"`
+			// Phase 1c: change_note signals a GS state change
+			ChangeNote string `json:"change_note"`
+			// Phase 2a: full network topology from each beacon
+			GSStatus []spduGSStatus `json:"gs_status"`
+			// Section 2.7: system table version advertised by this GS
+			SystableVersion int `json:"systable_version"`
 		} `json:"spdu"`
+		// Phase 1d: dumphfdl application metadata
+		App *struct {
+			Ver string `json:"ver"`
+		} `json:"app"`
+		Station string `json:"station"`
 	} `json:"hfdl"`
 }
 
@@ -174,6 +241,20 @@ type AircraftState struct {
 	LastSeen int64        `json:"last_seen"`       // unix seconds
 	Bearing  float64      `json:"bearing"`         // degrees clockwise from north, 0 if unknown
 	Track    []TrackPoint `json:"-"`               // position history, served via /aircraft/{key}/track only
+	// Phase 3a: last frequency change cause
+	LastFreqChangeCause string `json:"last_freq_change_cause,omitempty"`
+	// Phase 3b: link quality from pdu_stats
+	MPDURx    int     `json:"mpdu_rx,omitempty"`
+	MPDUTx    int     `json:"mpdu_tx,omitempty"`
+	MPDUErr   int     `json:"mpdu_err,omitempty"`
+	ErrorRate float64 `json:"error_rate,omitempty"` // 0–100 %
+	// Phase 3c: current datalink type from media-adv
+	CurrentLink string `json:"current_link,omitempty"` // e.g. "HF", "VHF", "SATCOM"
+	// Phase 3d: aircraft-reported UTC time
+	AircraftTime int64 `json:"aircraft_time,omitempty"` // unix seconds
+	// Section 2.6.4: ADS-C altitude from basic_report
+	AltFt    float64 `json:"alt_ft,omitempty"`    // feet, 0 = unknown
+	AltValid bool    `json:"alt_valid,omitempty"` // true if alt_ft was set from ADS-C
 }
 
 // RecentMessage is a trimmed record for the live feed.
@@ -190,16 +271,37 @@ type RecentMessage struct {
 	MsgType  string  `json:"msg_type"`
 	Reg      string  `json:"reg,omitempty"`
 	Flight   string  `json:"flight,omitempty"`
+	// Phase 1b: ACARS message content
+	Label    string `json:"label,omitempty"`
+	Sublabel string `json:"sublabel,omitempty"`
+	MsgText  string `json:"msg_text,omitempty"`
+	// Section 7.1: current datalink for Live Feed column
+	CurrentLink string `json:"current_link,omitempty"`
+	// Section 2.3: logon/logoff detail
+	AssignedAcID int    `json:"assigned_ac_id,omitempty"`
+	ReasonCode   int    `json:"reason_code,omitempty"`
+	ReasonDescr  string `json:"reason_descr,omitempty"`
+}
+
+// gsEvent is the payload for a "gs_event" SSE notification (Phase 1c).
+type gsEvent struct {
+	Time       int64  `json:"time"`
+	GSID       int    `json:"gs_id"`
+	Location   string `json:"location"`
+	ChangeNote string `json:"change_note"`
+	FreqKHz    int64  `json:"freq_khz"`
 }
 
 // StatsSnapshot is the full stats payload served at /stats.
 type StatsSnapshot struct {
-	TotalMessages  int64           `json:"total_messages"`
-	StartTime      int64           `json:"start_time"`
-	UptimeSecs     int64           `json:"uptime_secs"`
-	Frequencies    []*FreqStats    `json:"frequencies"`
-	Recent         []RecentMessage `json:"recent"`
-	GroundStations map[int]string  `json:"ground_stations"` // gs_id → location name
+	TotalMessages   int64           `json:"total_messages"`
+	StartTime       int64           `json:"start_time"`
+	UptimeSecs      int64           `json:"uptime_secs"`
+	Frequencies     []*FreqStats    `json:"frequencies"`
+	Recent          []RecentMessage `json:"recent"`
+	GroundStations  map[int]string  `json:"ground_stations"`            // gs_id → location name
+	DumphfdlVer     string          `json:"dumphfdl_ver,omitempty"`     // Phase 1d
+	SystableVersion int             `json:"systable_version,omitempty"` // Section 2.7
 }
 
 // sseEvent wraps a typed SSE payload so the browser can distinguish
@@ -224,6 +326,11 @@ type groundStationResponse struct {
 	HeardFreqsKHz []int64       `json:"heard_freqs_khz,omitempty"` // frequencies actually heard on (as source)
 	DstFreqsKHz   []int64       `json:"dst_freqs_khz,omitempty"`   // frequencies seen as destination only
 	LastSigLevel  float64       `json:"last_sig_level,omitempty"`  // most recent signal level (dBFS) when GS was source
+	// Phase 2b: SPDU-derived network state
+	SPDUActive     bool    `json:"spdu_active"`
+	SPDULastSeen   int64   `json:"spdu_last_seen,omitempty"`
+	UTCSync        bool    `json:"utc_sync"`
+	ActiveFreqsKHz []int64 `json:"active_freqs_khz,omitempty"`
 }
 
 // statsStore holds all aggregated statistics and the SSE subscriber list.
@@ -241,6 +348,17 @@ type statsStore struct {
 	gsNames        map[int]string             // gs_id → location name (read-only after init)
 	freqGSID       map[int][]int              // freq_khz → []gs_id (read-only after init)
 	stations       []groundStation            // all ground stations sorted by ID (read-only after init)
+	// Phase 2a: SPDU-derived network topology
+	networkGS map[int]*NetworkGSState // gs_id → latest SPDU-advertised state
+	// Phase 4a: propagation paths from freq_data[]
+	// key: "acKey:gsID" → PropPath
+	propagation map[string]*PropPath
+	// Weather: ring buffer of label H1 / sublabel WX messages
+	weatherMessages []WeatherMessage
+	// Phase 1d: dumphfdl version string (set on first message received)
+	dumphfdlVer string
+	// Section 2.7: highest system table version seen in any SPDU
+	systableVersion int
 
 	subsMu sync.Mutex
 	subs   map[chan string]struct{}
@@ -264,6 +382,8 @@ func newStatsStore(gsNames map[int]string, freqGSID map[int][]int, stations []gr
 		gsNames:        gsNames,
 		freqGSID:       freqGSID,
 		stations:       stations,
+		networkGS:      make(map[int]*NetworkGSState),
+		propagation:    make(map[string]*PropPath),
 		subs:           make(map[chan string]struct{}),
 	}
 }
@@ -343,6 +463,14 @@ func (s *statsStore) ingest(line string) {
 		rm.DstType = h.LPDU.Dst.Type
 		rm.DstID = h.LPDU.Dst.ID
 		rm.MsgType = h.LPDU.Type.Name
+		// Section 2.3: logon/logoff detail fields
+		if h.LPDU.AssignedAcID != 0 {
+			rm.AssignedAcID = h.LPDU.AssignedAcID
+		}
+		if h.LPDU.Reason != nil {
+			rm.ReasonCode = h.LPDU.Reason.Code
+			rm.ReasonDescr = h.LPDU.Reason.Descr
+		}
 
 		if h.LPDU.Src.Type == "Ground station" {
 			recordGSSrc(h.LPDU.Src.ID)
@@ -355,10 +483,14 @@ func (s *statsStore) ingest(line string) {
 			s.dstGSFreqs[dstID][freqKHz] = struct{}{}
 		}
 
-		// Gather identity fields
+		// Gather identity fields.
+		// Phase 1a: ICAO may be at top-level ac_info (logon frames) OR embedded
+		// inside lpdu.src.ac_info (when aircraft is already in the AC cache).
 		icao := ""
-		if h.LPDU.AcInfo != nil {
+		if h.LPDU.AcInfo != nil && h.LPDU.AcInfo.ICAO != "" {
 			icao = h.LPDU.AcInfo.ICAO
+		} else if h.LPDU.Src.AcInfo != nil && h.LPDU.Src.AcInfo.ICAO != "" {
+			icao = h.LPDU.Src.AcInfo.ICAO
 		}
 		reg := ""
 		flight := ""
@@ -366,6 +498,35 @@ func (s *statsStore) ingest(line string) {
 			if h.LPDU.HFNPDU.ACARS != nil {
 				reg = strings.TrimPrefix(h.LPDU.HFNPDU.ACARS.Reg, ".")
 				flight = strings.TrimPrefix(h.LPDU.HFNPDU.ACARS.Flight, ".")
+				// Phase 1b: populate ACARS content fields in the recent message
+				rm.Label = h.LPDU.HFNPDU.ACARS.Label
+				rm.Sublabel = h.LPDU.HFNPDU.ACARS.Sublabel
+				rm.MsgText = h.LPDU.HFNPDU.ACARS.MsgText
+				// Weather: store H1/WX messages in the weather ring buffer
+				if h.LPDU.HFNPDU.ACARS.Label == "H1" &&
+					h.LPDU.HFNPDU.ACARS.Sublabel == "WX" &&
+					h.LPDU.HFNPDU.ACARS.MsgText != "" {
+					gsID := 0
+					if h.LPDU.Dst.Type == "Ground station" {
+						gsID = h.LPDU.Dst.ID
+					} else if h.LPDU.Src.Type == "Ground station" {
+						gsID = h.LPDU.Src.ID
+					}
+					wm := WeatherMessage{
+						Time:     now,
+						FreqKHz:  freqKHz,
+						Reg:      strings.TrimPrefix(h.LPDU.HFNPDU.ACARS.Reg, "."),
+						Flight:   strings.TrimPrefix(h.LPDU.HFNPDU.ACARS.Flight, "."),
+						GSID:     gsID,
+						Label:    h.LPDU.HFNPDU.ACARS.Label,
+						Sublabel: h.LPDU.HFNPDU.ACARS.Sublabel,
+						MsgText:  h.LPDU.HFNPDU.ACARS.MsgText,
+					}
+					s.weatherMessages = append([]WeatherMessage{wm}, s.weatherMessages...)
+					if len(s.weatherMessages) > maxWeatherMessages {
+						s.weatherMessages = s.weatherMessages[:maxWeatherMessages]
+					}
+				}
 			}
 			if h.LPDU.HFNPDU.FlightID != "" && flight == "" {
 				flight = h.LPDU.HFNPDU.FlightID
@@ -400,6 +561,93 @@ func (s *statsStore) ingest(line string) {
 				}
 				if flight != "" {
 					existing.Flight = flight
+				}
+				// Phase 3a: last frequency change cause
+				if h.LPDU.HFNPDU.LastFreqChangeCause != "" {
+					existing.LastFreqChangeCause = h.LPDU.HFNPDU.LastFreqChangeCause
+				}
+				// Phase 3b: PDU error statistics
+				if h.LPDU.HFNPDU.PDUStats != nil && h.LPDU.HFNPDU.PDUStats.MPDU != nil {
+					m := h.LPDU.HFNPDU.PDUStats.MPDU
+					existing.MPDURx = m.Rx
+					existing.MPDUTx = m.Tx
+					existing.MPDUErr = m.Err
+					total := m.Rx + m.Tx
+					if total > 0 {
+						existing.ErrorRate = float64(m.Err) / float64(total) * 100
+					}
+				}
+				// Phase 3c: current datalink from media-adv
+				if h.LPDU.HFNPDU.ACARS != nil &&
+					h.LPDU.HFNPDU.ACARS.MediaAdv != nil &&
+					h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink != nil {
+					existing.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Code
+					// Also populate RecentMessage for the Live Feed datalink column
+					rm.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Code
+				}
+				// Phase 3d: aircraft-reported time
+				if h.LPDU.HFNPDU.Time != nil && h.LPDU.HFNPDU.Time.Sec > 0 {
+					existing.AircraftTime = h.LPDU.HFNPDU.Time.Sec
+				} else if h.LPDU.HFNPDU.UTCTime != nil && h.LPDU.HFNPDU.UTCTime.Sec > 0 {
+					existing.AircraftTime = h.LPDU.HFNPDU.UTCTime.Sec
+				}
+				// Section 2.6.4: ADS-C altitude from arinc622.adsc.tags[].basic_report
+				if h.LPDU.HFNPDU.ACARS != nil &&
+					h.LPDU.HFNPDU.ACARS.ARINC622 != nil &&
+					h.LPDU.HFNPDU.ACARS.ARINC622.ADSC != nil {
+					for _, tag := range h.LPDU.HFNPDU.ACARS.ARINC622.ADSC.Tags {
+						if tag.BasicReport != nil && tag.BasicReport.Alt != 0 {
+							existing.AltFt = tag.BasicReport.Alt
+							existing.AltValid = true
+							// ADS-C basic_report also carries lat/lon — use if more precise
+							// than the HFNPDU pos (which may be absent in Enveloped Data)
+							if !isValidPos(existing.Lat, existing.Lon) &&
+								isValidPos(tag.BasicReport.Lat, tag.BasicReport.Lon) {
+								existing.Lat = tag.BasicReport.Lat
+								existing.Lon = tag.BasicReport.Lon
+							}
+						}
+					}
+				}
+				// Phase 4a: propagation paths from freq_data[]
+				for _, fde := range h.LPDU.HFNPDU.FreqData {
+					gsID := fde.GS.ID
+					propKey := fmt.Sprintf("%s:%d", acKey, gsID)
+					// Pick the best (highest) signal level from the freq list
+					bestSig := -999.0
+					bestFreqKHz := int64(0)
+					for _, f := range fde.Freqs {
+						if f.SigLevel > bestSig {
+							bestSig = f.SigLevel
+							bestFreqKHz = f.Freq / 1000
+						}
+					}
+					loc := s.gsNames[gsID]
+					if loc == "" {
+						loc = fmt.Sprintf("GS %d", gsID)
+					}
+					pp := s.propagation[propKey]
+					if pp == nil {
+						pp = &PropPath{AircraftKey: acKey}
+						s.propagation[propKey] = pp
+					}
+					pp.GSID = gsID
+					pp.GSLocation = loc
+					pp.LastSeen = now
+					if bestFreqKHz > 0 {
+						pp.FreqKHz = bestFreqKHz
+						pp.SigLevel = bestSig
+					}
+					// Keep identity fields up to date
+					if icao != "" {
+						pp.ICAO = icao
+					}
+					if reg != "" {
+						pp.Reg = reg
+					}
+					if flight != "" {
+						pp.Flight = flight
+					}
 				}
 			}
 
@@ -441,6 +689,55 @@ func (s *statsStore) ingest(line string) {
 		if h.SPDU.Src.Type == "Ground station" {
 			recordGSSrc(h.SPDU.Src.ID)
 		}
+		// Section 2.7: track highest system table version seen
+		if h.SPDU.SystableVersion > s.systableVersion {
+			s.systableVersion = h.SPDU.SystableVersion
+		}
+		// Phase 2a: update networkGS from gs_status array
+		for _, gss := range h.SPDU.GSStatus {
+			gsID := gss.GS.ID
+			state, ok := s.networkGS[gsID]
+			if !ok {
+				loc := s.gsNames[gsID]
+				if loc == "" {
+					loc = fmt.Sprintf("GS %d", gsID)
+				}
+				state = &NetworkGSState{GSID: gsID, Location: loc}
+				s.networkGS[gsID] = state
+			}
+			state.UTCSync = gss.GS.UTCSync
+			state.SPDULastSeen = now
+			state.SPDUActive = true
+			// Rebuild active freq lists from this beacon
+			state.ActiveFreqsHz = make([]int64, 0, len(gss.Freqs))
+			state.ActiveFreqsKHz = make([]int64, 0, len(gss.Freqs))
+			for _, f := range gss.Freqs {
+				state.ActiveFreqsHz = append(state.ActiveFreqsHz, f.Freq)
+				state.ActiveFreqsKHz = append(state.ActiveFreqsKHz, f.Freq/1000)
+			}
+		}
+	}
+
+	// Phase 1d: capture dumphfdl version from first message that carries it
+	if s.dumphfdlVer == "" && h.App != nil && h.App.Ver != "" {
+		s.dumphfdlVer = h.App.Ver
+	}
+
+	// Phase 1c: capture change_note for gs_event emission after unlock
+	var gsEvt *gsEvent
+	if h.SPDU != nil && h.SPDU.ChangeNote != "" && h.SPDU.ChangeNote != "None" {
+		gsID := h.SPDU.Src.ID
+		loc := s.gsNames[gsID]
+		if loc == "" {
+			loc = fmt.Sprintf("GS %d", gsID)
+		}
+		gsEvt = &gsEvent{
+			Time:       now,
+			GSID:       gsID,
+			Location:   loc,
+			ChangeNote: h.SPDU.ChangeNote,
+			FreqKHz:    freqKHz,
+		}
 	}
 
 	s.recent = append(s.recent, rm)
@@ -458,6 +755,13 @@ func (s *statsStore) ingest(line string) {
 	// Broadcast position update if we got one
 	if posUpdate != nil {
 		if ev, err := json.Marshal(sseEvent{Type: "position", Data: posUpdate}); err == nil {
+			s.broadcast(string(ev))
+		}
+	}
+
+	// Phase 1c: broadcast gs_event if a ground station state change was detected
+	if gsEvt != nil {
+		if ev, err := json.Marshal(sseEvent{Type: "gs_event", Data: gsEvt}); err == nil {
 			s.broadcast(string(ev))
 		}
 	}
@@ -541,13 +845,61 @@ func (s *statsStore) snapshot() StatsSnapshot {
 	copy(recent, s.recent)
 
 	return StatsSnapshot{
-		TotalMessages:  s.total,
-		StartTime:      s.startTime.Unix(),
-		UptimeSecs:     int64(time.Since(s.startTime).Seconds()),
-		Frequencies:    freqs,
-		Recent:         recent,
-		GroundStations: s.gsNames,
+		TotalMessages:   s.total,
+		StartTime:       s.startTime.Unix(),
+		UptimeSecs:      int64(time.Since(s.startTime).Seconds()),
+		Frequencies:     freqs,
+		Recent:          recent,
+		GroundStations:  s.gsNames,
+		DumphfdlVer:     s.dumphfdlVer,
+		SystableVersion: s.systableVersion,
 	}
+}
+
+// networkSnapshot returns a copy of all known NetworkGSState entries,
+// sorted by GS ID.  Used by GET /network.
+func (s *statsStore) networkSnapshot() []NetworkGSState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	const spduActiveSecs = int64(10 * 60) // 10 minutes
+	now := time.Now().Unix()
+
+	result := make([]NetworkGSState, 0, len(s.networkGS))
+	for _, state := range s.networkGS {
+		cp := *state
+		cp.SPDUActive = (now - state.SPDULastSeen) < spduActiveSecs
+		result = append(result, cp)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].GSID < result[j].GSID
+	})
+	return result
+}
+
+// propagationSnapshot returns a PropSnapshot built from all known propagation
+// paths.  Used by GET /propagation.
+func (s *statsStore) propagationSnapshot() PropSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	paths := make([]PropPath, 0, len(s.propagation))
+	byGS := make(map[int][]string)
+	byAC := make(map[string][]int)
+
+	for _, pp := range s.propagation {
+		cp := *pp
+		paths = append(paths, cp)
+		byGS[pp.GSID] = append(byGS[pp.GSID], pp.AircraftKey)
+		byAC[pp.AircraftKey] = append(byAC[pp.AircraftKey], pp.GSID)
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		if paths[i].AircraftKey != paths[j].AircraftKey {
+			return paths[i].AircraftKey < paths[j].AircraftKey
+		}
+		return paths[i].GSID < paths[j].GSID
+	})
+	return PropSnapshot{Paths: paths, ByGS: byGS, ByAircraft: byAC}
 }
 
 const aircraftMaxAgeSecs = 30 * 60 // 30 minutes
@@ -608,10 +960,14 @@ func (s *statsStore) trackSnapshot(key string) []TrackPoint {
 	return cp
 }
 
-// groundStationsSnapshot returns the station list merged with last-heard times and heard frequencies.
+// groundStationsSnapshot returns the station list merged with last-heard times,
+// heard frequencies, and Phase 2b SPDU-derived network state.
 func (s *statsStore) groundStationsSnapshot() []groundStationResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	const spduActiveSecs = int64(10 * 60) // 10 minutes
+	now := time.Now().Unix()
 
 	result := make([]groundStationResponse, len(s.stations))
 	for i, gs := range s.stations {
@@ -631,7 +987,7 @@ func (s *statsStore) groundStationsSnapshot() []groundStationResponse {
 			}
 			sort.Slice(dstFreqs, func(a, b int) bool { return dstFreqs[a] < dstFreqs[b] })
 		}
-		result[i] = groundStationResponse{
+		r := groundStationResponse{
 			GSID:          gs.GSID,
 			Location:      gs.Location,
 			Lat:           gs.Lat,
@@ -642,6 +998,14 @@ func (s *statsStore) groundStationsSnapshot() []groundStationResponse {
 			DstFreqsKHz:   dstFreqs,
 			LastSigLevel:  s.heardGSLastSig[gs.GSID],
 		}
+		// Phase 2b: merge SPDU network state if available
+		if net, ok := s.networkGS[gs.GSID]; ok {
+			r.SPDUActive = (now - net.SPDULastSeen) < spduActiveSecs
+			r.SPDULastSeen = net.SPDULastSeen
+			r.UTCSync = net.UTCSync
+			r.ActiveFreqsKHz = net.ActiveFreqsKHz
+		}
+		result[i] = r
 	}
 	return result
 }

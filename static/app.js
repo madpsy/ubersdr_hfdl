@@ -5,6 +5,13 @@
 'use strict';
 
 const MAX_FEED_ROWS = 100;
+const MAX_MESSAGES_ROWS = 500; // Messages tab ring buffer
+const MAX_EVENTS_ROWS = 500;   // Events tab ring buffer
+
+// ---- In-memory ring buffers for new tabs -----------------------------------
+// Each entry is the raw SSE data object for that event type.
+const messagesStore = []; // ACARS messages with msg_text
+const eventsStore   = []; // logon / logoff / gs_event / notable frames
 
 // ---- Aircraft store (kept in sync via SSE) ----------------------------------
 // Keys are aircraft key strings, values are AircraftState objects from /aircraft.
@@ -189,8 +196,20 @@ function buildFeedRow(msg) {
   const typeCls = msg.msg_type === 'SPDU' ? 'type-spdu' : 'type-lpdu';
   const type    = esc(msg.msg_type) || '—';
   const regFlt  = [esc(msg.reg), esc(msg.flight)].filter(Boolean).join(' / ') || '';
+  // Phase 1b: truncated message text (max 60 chars)
+  const msgText = msg.msg_text
+    ? `<span class="feed-msg-text" title="${esc(msg.msg_text)}">${esc(msg.msg_text.slice(0, 60))}${msg.msg_text.length > 60 ? '…' : ''}</span>`
+    : '';
+  // Section 7.1: row colour class by LPDU type
+  const rowCls = msg.msg_type === 'Logon confirm'
+    ? ' feed-row--logon'
+    : (msg.msg_type === 'Logoff request' || msg.msg_type === 'Logon denied')
+      ? ' feed-row--logoff'
+      : '';
+  // Section 7.1: datalink icon
+  const dl = datalinkLabel(msg.current_link);
 
-  return `<tr class="feed-new">
+  return `<tr class="feed-new${rowCls}">
     <td>${time}</td>
     <td>${freq}</td>
     <td class="${slotCls}">${esc(msg.slot) || '—'}</td>
@@ -200,6 +219,8 @@ function buildFeedRow(msg) {
     <td>${dst}</td>
     <td class="${typeCls}">${type}</td>
     <td>${regFlt}</td>
+    <td class="mono">${dl || '—'}</td>
+    <td class="feed-msg-cell">${msgText}</td>
   </tr>`;
 }
 
@@ -214,6 +235,210 @@ function prependFeedRow(msg) {
   while (tbody.rows.length > MAX_FEED_ROWS) {
     tbody.deleteRow(tbody.rows.length - 1);
   }
+}
+
+// ---- Messages tab (Phase 1b) -----------------------------------------------
+
+// Active filter state
+const msgFilter = { reg: '', flight: '', label: '' };
+
+function isWeatherMsg(msg) {
+  return msg.label === 'H1' && msg.sublabel === 'WX';
+}
+
+function msgMatchesFilter(msg) {
+  if (msgFilter.reg && !(msg.reg || '').toLowerCase().includes(msgFilter.reg)) return false;
+  if (msgFilter.flight && !(msg.flight || '').toLowerCase().includes(msgFilter.flight)) return false;
+  if (msgFilter.label && !(msg.label || '').toLowerCase().includes(msgFilter.label)) return false;
+  return true;
+}
+
+function renderMessagesTable() {
+  const tbody = document.getElementById('messages-tbody');
+  if (!tbody) return;
+  const filtered = messagesStore.filter(msgMatchesFilter);
+  const countEl = document.getElementById('msg-count-label');
+  if (countEl) countEl.textContent = `${filtered.length} / ${messagesStore.length}`;
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No ACARS messages match the filter…</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map(msg => {
+    const gsName = msg.dst_type === 'Ground station' && gsNames[msg.dst_id]
+      ? `${gsNames[msg.dst_id]} (${msg.dst_id})`
+      : (msg.dst_id ? `GS ${msg.dst_id}` : '—');
+    const weatherCls = isWeatherMsg(msg) ? ' msg-row--weather' : '';
+    const fullText = esc(msg.msg_text || '');
+    const shortText = msg.msg_text && msg.msg_text.length > 120
+      ? esc(msg.msg_text.slice(0, 120)) + '…'
+      : fullText;
+    return `<tr class="msg-row${weatherCls}">
+      <td class="mono dim">${fmtTime(msg.time)}</td>
+      <td class="mono">${esc(msg.reg) || '—'}</td>
+      <td class="mono">${esc(msg.flight) || '—'}</td>
+      <td class="mono msg-label">${esc(msg.label) || '—'}</td>
+      <td class="mono dim">${esc(msg.sublabel) || ''}</td>
+      <td class="dim">${esc(gsName)}</td>
+      <td class="mono dim">${msg.freq_khz ? msg.freq_khz.toLocaleString() : '—'}</td>
+      <td class="msg-text-cell"><span class="msg-text-content" title="${fullText}">${shortText || '<em class="dim">—</em>'}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function addMessageEntry(msg) {
+  if (!msg.msg_text && !msg.label) return; // only store ACARS frames
+  messagesStore.unshift(msg);
+  if (messagesStore.length > MAX_MESSAGES_ROWS) messagesStore.length = MAX_MESSAGES_ROWS;
+  if (document.getElementById('tab-messages').classList.contains('active')) {
+    renderMessagesTable();
+  }
+}
+
+function initMessagesTab() {
+  const regEl    = document.getElementById('msg-filter-reg');
+  const flightEl = document.getElementById('msg-filter-flight');
+  const labelEl  = document.getElementById('msg-filter-label');
+  const clearEl  = document.getElementById('msg-filter-clear');
+  if (!regEl) return;
+
+  function applyFilter() {
+    msgFilter.reg    = regEl.value.trim().toLowerCase();
+    msgFilter.flight = flightEl.value.trim().toLowerCase();
+    msgFilter.label  = labelEl.value.trim().toLowerCase();
+    renderMessagesTable();
+  }
+  regEl.addEventListener('input', applyFilter);
+  flightEl.addEventListener('input', applyFilter);
+  labelEl.addEventListener('input', applyFilter);
+  clearEl.addEventListener('click', () => {
+    regEl.value = flightEl.value = labelEl.value = '';
+    msgFilter.reg = msgFilter.flight = msgFilter.label = '';
+    renderMessagesTable();
+  });
+}
+
+// ---- Events tab (Phase 1c) -------------------------------------------------
+
+const evtFilter = { type: '' };
+
+function evtMatchesFilter(evt) {
+  if (evtFilter.type && evt._evtType !== evtFilter.type) return false;
+  return true;
+}
+
+function evtRowClass(evt) {
+  switch (evt._evtType) {
+    case 'logon':    return ' evt-row--logon';
+    case 'logoff':   return ' evt-row--logoff';
+    case 'gs_event': return ' evt-row--gs';
+    default:         return '';
+  }
+}
+
+function evtTypeLabel(evt) {
+  switch (evt._evtType) {
+    case 'logon':    return '🟢 Logon';
+    case 'logoff':   return '🔴 Logoff';
+    case 'gs_event': return '⚠ GS Event';
+    default:         return esc(evt._evtType || 'Frame');
+  }
+}
+
+function evtActor(evt) {
+  if (evt._evtType === 'gs_event') {
+    return esc(evt.location || `GS ${evt.gs_id}`);
+  }
+  const parts = [esc(evt.reg), esc(evt.flight), evt.icao ? `(${esc(evt.icao)})` : ''].filter(Boolean);
+  return parts.join(' ') || (evt.src_id ? `Aircraft ${evt.src_id}` : '—');
+}
+
+function evtDetail(evt) {
+  if (evt._evtType === 'gs_event') return esc(evt.change_note || '');
+  if (evt._evtType === 'logon') {
+    const id = evt.assigned_ac_id ? `Assigned ID ${evt.assigned_ac_id}` : '';
+    return id || 'Logon confirmed';
+  }
+  if (evt._evtType === 'logoff') {
+    // reason_descr comes from lpdu.reason.descr (Section 2.3)
+    return esc(evt.reason_descr || evt.reason || '');
+  }
+  return esc(evt.msg_type || '');
+}
+
+function renderEventsTable() {
+  const tbody = document.getElementById('events-tbody');
+  if (!tbody) return;
+  const filtered = eventsStore.filter(evtMatchesFilter);
+  const countEl = document.getElementById('evt-count-label');
+  if (countEl) countEl.textContent = `${filtered.length} / ${eventsStore.length}`;
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No events match the filter…</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map(evt => {
+    const freq = evt.freq_khz ? evt.freq_khz.toLocaleString() : (evt.freq_khz === 0 ? '—' : '—');
+    return `<tr class="evt-row${evtRowClass(evt)}">
+      <td class="mono dim">${fmtTime(evt.time)}</td>
+      <td>${evtTypeLabel(evt)}</td>
+      <td>${evtActor(evt)}</td>
+      <td class="mono dim">${freq}</td>
+      <td class="dim">${evtDetail(evt)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function addEventEntry(type, data) {
+  const entry = Object.assign({ _evtType: type }, data);
+  eventsStore.unshift(entry);
+  if (eventsStore.length > MAX_EVENTS_ROWS) eventsStore.length = MAX_EVENTS_ROWS;
+  if (document.getElementById('tab-events').classList.contains('active')) {
+    renderEventsTable();
+  }
+}
+
+function initEventsTab() {
+  const typeEl  = document.getElementById('evt-filter-type');
+  const clearEl = document.getElementById('evt-filter-clear');
+  if (!typeEl) return;
+  typeEl.addEventListener('change', () => {
+    evtFilter.type = typeEl.value;
+    renderEventsTable();
+  });
+  clearEl.addEventListener('click', () => {
+    typeEl.value = '';
+    evtFilter.type = '';
+    renderEventsTable();
+  });
+}
+
+// ---- Toast notification system (Phase 1c) ----------------------------------
+
+const toastLog = []; // last 10 gs_events for the bell log
+const MAX_TOAST_LOG = 10;
+let toastBellOpen = false;
+
+function showToast(msg, durationMs = 30000) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = 'toast toast--new';
+  toast.innerHTML =
+    `<span class="toast-msg">${esc(msg)}</span>` +
+    `<button class="toast-close" aria-label="Dismiss">✕</button>`;
+  toast.querySelector('.toast-close').addEventListener('click', () => toast.remove());
+  container.appendChild(toast);
+  // Remove the animation class after it plays
+  requestAnimationFrame(() => toast.classList.remove('toast--new'));
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, durationMs);
+}
+
+function handleGSEvent(data) {
+  const loc = data.location || `GS ${data.gs_id}`;
+  const msg = `⚠ ${loc}: ${data.change_note}`;
+  showToast(msg);
+  toastLog.unshift({ time: data.time, msg });
+  if (toastLog.length > MAX_TOAST_LOG) toastLog.length = MAX_TOAST_LOG;
+  addEventEntry('gs_event', data);
 }
 
 // ---- Initial stats load ----------------------------------------------------
@@ -237,6 +462,20 @@ function loadStats() {
       }
       document.getElementById('total-label').textContent =
         'Total messages: ' + (data.total_messages || 0).toLocaleString();
+
+      // Phase 1d: show dumphfdl version in the status bar
+      if (data.dumphfdl_ver) {
+        let verEl = document.getElementById('dumphfdl-ver-label');
+        if (!verEl) {
+          verEl = document.createElement('span');
+          verEl.id = 'dumphfdl-ver-label';
+          verEl.className = 'dumphfdl-ver';
+          document.getElementById('status-bar').appendChild(verEl);
+        }
+        let verText = 'dumphfdl ' + data.dumphfdl_ver;
+        if (data.systable_version) verText += ' · systable v' + data.systable_version;
+        verEl.textContent = verText;
+      }
 
       renderFreqTable(data.frequencies);
 
@@ -323,12 +562,28 @@ function handleSSEEvent(raw) {
         recordBandActivity(data.freq_khz);
       }
     }
+    // Phase 1b: feed Messages tab if this frame has ACARS content
+    if (data.msg_text || data.label) {
+      addMessageEntry(data);
+    }
+    // Phase 1c: feed Events tab for logon / logoff frames
+    if (data.msg_type === 'Logon confirm') {
+      addEventEntry('logon', data);
+    } else if (data.msg_type === 'Logoff request' || data.msg_type === 'Logon denied') {
+      addEventEntry('logoff', data);
+    }
 
   } else if (type === 'position') {
     // Update local store and re-render planes table if visible
     aircraftStore[data.key] = data;
     if (document.getElementById('tab-planes').classList.contains('active')) {
       renderAircraftTable();
+    }
+    // Record link quality sample for the LQ tab sparklines
+    if (typeof recordLQSample === 'function') recordLQSample(data);
+    // Re-render LQ tab if visible
+    if (document.getElementById('tab-lq') && document.getElementById('tab-lq').classList.contains('active')) {
+      if (typeof renderLinkQualityTab === 'function') renderLinkQualityTab();
     }
     // Delegate to map.js
     if (typeof handlePositionEvent === 'function') {
@@ -345,6 +600,10 @@ function handleSSEEvent(raw) {
     if (typeof handlePurgeEvent === 'function') {
       handlePurgeEvent(data);
     }
+
+  } else if (type === 'gs_event') {
+    // Phase 1c: ground station state change — show toast and log to Events tab
+    handleGSEvent(data);
   }
 }
 
@@ -385,11 +644,29 @@ function startPeriodicRefresh(intervalMs) {
 
 // ---- Planes tab ------------------------------------------------------------
 
+// Returns a datalink icon + label for the current_link code.
+function datalinkLabel(code) {
+  if (!code) return '';
+  switch (code.toUpperCase()) {
+    case 'HF':     return '📻 HF';
+    case 'VHF':    return '📶 VHF';
+    case 'SATCOM': return '🛰 SAT';
+    default:       return esc(code);
+  }
+}
+
+// Returns a colour class for an error rate percentage.
+function errRateClass(pct) {
+  if (pct >= 20) return 'err-high';
+  if (pct >= 5)  return 'err-mid';
+  return 'err-low';
+}
+
 function renderAircraftTable() {
   const tbody = document.getElementById('planes-tbody');
   const list = Object.values(aircraftStore);
   if (list.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty">No aircraft seen yet…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="empty">No aircraft seen yet…</td></tr>';
     return;
   }
 
@@ -405,6 +682,18 @@ function renderAircraftTable() {
     const freq = ac.freq_khz ? ac.freq_khz.toLocaleString() : '—';
     const sig  = ac.sig_level != null ? ac.sig_level.toFixed(1) : '—';
     const sigCls = ac.sig_level != null ? sigClass(ac.sig_level) : '';
+    // Phase 3c: datalink
+    const dl = datalinkLabel(ac.current_link);
+    // Phase 3b: link quality
+    let lqCell = '—';
+    if (ac.error_rate != null && (ac.mpdu_rx || ac.mpdu_tx)) {
+      const cls = errRateClass(ac.error_rate);
+      lqCell = `<span class="err-rate ${cls}">${ac.error_rate.toFixed(1)}%</span>`;
+    }
+    // Phase 3a: freq change cause (truncated)
+    const fcc = ac.last_freq_change_cause
+      ? `<span title="${esc(ac.last_freq_change_cause)}">${esc(ac.last_freq_change_cause.slice(0, 20))}${ac.last_freq_change_cause.length > 20 ? '…' : ''}</span>`
+      : '—';
     return `<tr>
       <td class="mono">${esc(ac.icao) || '—'}</td>
       <td class="mono">${esc(ac.reg)  || '—'}</td>
@@ -413,7 +702,10 @@ function renderAircraftTable() {
       <td class="mono dim">${lon}</td>
       <td class="mono">${freq}</td>
       <td>${esc(gsName)}</td>
+      <td class="mono">${dl || '—'}</td>
       <td class="mono ${sigCls}">${sig !== '—' ? sig + ' dBFS' : '—'}</td>
+      <td>${lqCell}</td>
+      <td class="dim">${fcc}</td>
       <td class="mono">${ac.msg_count || 0}</td>
       <td class="dim">${fmtDateTime(ac.last_seen)}</td>
     </tr>`;
@@ -441,44 +733,94 @@ function renderGroundStations(stations) {
   }
 
   container.innerHTML = stations.map(gs => {
-     const heardSet = heardFreqsByGS[gs.gs_id];
-     const dstSet   = dstFreqsByGS[gs.gs_id];
+     const heardSet  = heardFreqsByGS[gs.gs_id];
+     const dstSet    = dstFreqsByGS[gs.gs_id];
+     const activeSet = gs.active_freqs_khz ? new Set(gs.active_freqs_khz) : new Set();
      const freqs = (gs.frequencies || [])
        .map(f => {
-         const isDisabled = f.enabled === false;
-         const isHeard = !isDisabled && heardSet && heardSet.has(f.freq_khz);
-         const isDst   = !isDisabled && !isHeard && dstSet && dstSet.has(f.freq_khz);
+         const isDisabled  = f.enabled === false;
+         const isHeard     = !isDisabled && heardSet && heardSet.has(f.freq_khz);
+         const isDst       = !isDisabled && !isHeard && dstSet && dstSet.has(f.freq_khz);
+         const isNetActive = !isDisabled && activeSet.has(f.freq_khz);
          const cls = isDisabled ? ' gs-freq--disabled'
                    : isHeard   ? ' gs-freq--heard'
                    : isDst     ? ' gs-freq--dst'
                    : '';
-         return `<span class="gs-freq${cls}">${f.freq_khz.toLocaleString()}<span class="gs-slot">T${f.timeslot}</span></span>`;
+         // Phase 2c: dot indicator if SPDU advertises this freq as active but not yet heard
+         const netDot = isNetActive && !isHeard
+           ? '<span class="gs-freq-net-dot" title="Advertised active in SPDU">·</span>'
+           : '';
+         return `<span class="gs-freq${cls}">${f.freq_khz.toLocaleString()}${netDot}<span class="gs-slot">T${f.timeslot}</span></span>`;
        })
        .join('');
     const heard = gs.last_heard > 0;
     const heardBadge = heard
       ? `<span class="gs-heard" title="Last heard ${fmtDateTime(gs.last_heard)}">● heard ${fmtTime(gs.last_heard)}</span>`
       : '';
-    return `<div class="gs-card${heard ? ' gs-card--heard' : ''}">
+    // Phase 2c: SPDU network active badge
+    const spduBadge = gs.spdu_active
+      ? `<span class="gs-spdu-badge gs-spdu-badge--active" title="Last SPDU: ${fmtDateTime(gs.spdu_last_seen)}">📡 SPDU</span>`
+      : '';
+    // Phase 2c: UTC sync indicator
+    const syncBadge = gs.spdu_last_seen
+      ? (gs.utc_sync
+          ? `<span class="gs-sync-badge gs-sync-badge--ok" title="UTC synchronised">✓ UTC</span>`
+          : `<span class="gs-sync-badge gs-sync-badge--bad" title="Not UTC synchronised">✗ UTC</span>`)
+      : '';
+    // Phase 4b: "Heard by N aircraft" from propagation data
+    const heardByCount = propHeardByGS[gs.gs_id] || 0;
+    const heardByBadge = heardByCount > 0
+      ? `<span class="gs-heardby-badge" title="Heard by ${heardByCount} aircraft (from Frequency Data reports)">👂 ${heardByCount} ac</span>`
+      : '';
+    // Section 7.3: active slots row — green chips for SPDU-advertised active freqs
+    // that are NOT already shown as heard (to avoid duplication)
+    let activeSlotsRow = '';
+    if (gs.active_freqs_khz && gs.active_freqs_khz.length > 0) {
+      // Only show slots not already in the configured frequency list
+      const configuredKHz = new Set((gs.frequencies || []).map(f => f.freq_khz));
+      const extraActive = gs.active_freqs_khz.filter(k => !configuredKHz.has(k));
+      if (extraActive.length > 0) {
+        const chips = extraActive.map(k =>
+          `<span class="gs-freq gs-freq--active-slot">${k.toLocaleString()}</span>`
+        ).join('');
+        activeSlotsRow = `<div class="gs-active-slots"><span class="gs-active-slots__label">SPDU active:</span>${chips}</div>`;
+      }
+    }
+    return `<div class="gs-card${heard ? ' gs-card--heard' : ''}${gs.spdu_active ? ' gs-card--spdu' : ''}">
       <div class="gs-card-header">
         <span class="gs-id">GS ${gs.gs_id}</span>
         <span class="gs-location">${esc(gs.location)}</span>
-        ${heardBadge}
+        ${heardBadge}${spduBadge}${syncBadge}${heardByBadge}
       </div>
       <div class="gs-freqs">${freqs || '<span class="gs-no-freqs">No frequencies</span>'}</div>
+      ${activeSlotsRow}
     </div>`;
   }).join('');
 }
 
+// Phase 4b: gs_id → number of aircraft that reported hearing this GS
+let propHeardByGS = {}; // populated by loadGroundStations()
+
 function loadGroundStations() {
-  fetch('/groundstations')
-    .then(r => r.json())
-    .then(data => {
+  // Fetch both /groundstations and /propagation in parallel so we can show
+  // "Heard by N aircraft" counts on each GS card.
+  Promise.all([
+    fetch('/groundstations').then(r => r.json()),
+    fetch('/propagation').then(r => r.json()).catch(() => null),
+  ])
+    .then(([data, propSnap]) => {
       // Build dstFreqsByGS from the dst_freqs_khz field on each station
       dstFreqsByGS = {};
       for (const gs of data) {
         if (Array.isArray(gs.dst_freqs_khz) && gs.dst_freqs_khz.length > 0) {
           dstFreqsByGS[gs.gs_id] = new Set(gs.dst_freqs_khz);
+        }
+      }
+      // Phase 4b: build heard-by counts from propagation snapshot
+      propHeardByGS = {};
+      if (propSnap && propSnap.by_gs) {
+        for (const [gsIdStr, acKeys] of Object.entries(propSnap.by_gs)) {
+          propHeardByGS[parseInt(gsIdStr, 10)] = acKeys.length;
         }
       }
       renderGroundStations(data);
@@ -1082,6 +1424,9 @@ function fetchReceiverDescription() {
 
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
+  // Initialise new tab filter controls
+  initMessagesTab();
+  initEventsTab();
   // Chain instances → stats so that cachedInstancesData is set before loadStats()
   // calls renderInstances(), ensuring frequency chips are coloured correctly on
   // the first render after a page load.
@@ -1121,10 +1466,15 @@ document.addEventListener('DOMContentLoaded', () => {
     )
   );
 
-  // Re-render planes table when switching to that tab
+  // Re-render tabs when switching to them
   document.addEventListener('tabchange', (e) => {
-    if (e.detail === 'planes') renderAircraftTable();
-    if (e.detail === 'signal') loadSignalHistory();
+    if (e.detail === 'planes')   renderAircraftTable();
+    if (e.detail === 'signal')   loadSignalHistory();
+    if (e.detail === 'messages') renderMessagesTable();
+    if (e.detail === 'events')      renderEventsTable();
+    if (e.detail === 'network'      && typeof loadNetworkTab      === 'function') loadNetworkTab();
+    if (e.detail === 'propagation'  && typeof loadPropagationTab  === 'function') loadPropagationTab();
+    if (e.detail === 'lq'           && typeof renderLinkQualityTab === 'function') renderLinkQualityTab();
   });
 
   // Initialise the Leaflet map (defined in map.js)

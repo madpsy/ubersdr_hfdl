@@ -1809,3 +1809,657 @@ td.empty {
     display: none;
   }
 }
+
+/* ==========================================================================
+   Phase 1 additions
+   ========================================================================== */
+
+/* ---- Tab toolbar (filter bar shared by Messages and Events tabs) ---- */
+
+.tab-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.filter-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 4px 8px;
+  width: 140px;
+}
+
+.filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.filter-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+.filter-count {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+/* ---- Live Feed — message text column ---- */
+
+.feed-msg-cell {
+  max-width: 300px;
+  overflow: hidden;
+}
+
+.feed-msg-text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  cursor: default;
+}
+
+/* ---- Messages tab ---- */
+
+#messages-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+#messages-table th,
+#messages-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+#messages-table th {
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+#messages-table tbody tr:hover {
+  background: var(--row-hover);
+}
+
+.msg-text-col {
+  width: 50%;
+}
+
+.msg-text-cell {
+  max-width: 0; /* forces text-overflow to work in table cell */
+}
+
+.msg-text-content {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  display: block;
+  max-height: 4.5em;
+  overflow: hidden;
+  cursor: default;
+}
+
+.msg-label {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* Weather rows — label H1 / sublabel WX */
+.msg-row--weather {
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.msg-row--weather .msg-label {
+  color: #79c0ff;
+}
+
+/* ---- Events tab ---- */
+
+#events-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+#events-table th,
+#events-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+#events-table th {
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+#events-table tbody tr:hover {
+  background: var(--row-hover);
+}
+
+.evt-row--logon  { background: rgba(63, 185, 80, 0.07); }
+.evt-row--logoff { background: rgba(248, 81, 73, 0.07); }
+.evt-row--gs     { background: rgba(210, 153, 34, 0.10); }
+
+/* ---- Toast notification system ---- */
+
+#toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: 420px;
+}
+
+.toast {
+  background: var(--surface);
+  border: 1px solid var(--yellow);
+  border-radius: 6px;
+  padding: 10px 14px;
+  color: var(--text);
+  font-size: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  pointer-events: all;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  animation: toast-slide-in 0.25s ease;
+}
+
+.toast--new {
+  animation: none;
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+@keyframes toast-slide-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.toast-msg {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.toast-close:hover {
+  color: var(--text);
+}
+
+/* ==========================================================================
+   Phase 3 additions
+   ========================================================================== */
+
+/* ---- Planes tab — link quality error rate ---- */
+
+.err-rate {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.err-low  { color: var(--green); }
+.err-mid  { color: var(--yellow); }
+.err-high { color: var(--red); }
+
+/* ---- Live Feed — row colour coding by LPDU type (Section 7.1) ---- */
+
+.feed-row--logon  { background: rgba(63, 185, 80, 0.07); }
+.feed-row--logoff { background: rgba(248, 81, 73, 0.07); }
+
+/* ---- Ground Stations tab — active slots row (Section 7.3) ---- */
+
+.gs-active-slots {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+}
+
+.gs-active-slots__label {
+  font-size: 10px;
+  color: var(--muted);
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+
+.gs-freq--active-slot {
+  background: rgba(63, 185, 80, 0.12);
+  color: var(--green);
+  border: 1px solid rgba(63, 185, 80, 0.35);
+  font-weight: 600;
+}
+
+/* ---- Link Quality tab ---- */
+
+#lq-content {
+  overflow: auto;
+  padding: 0;
+}
+
+.lq-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.lq-table th,
+.lq-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.lq-table th {
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.lq-table tbody tr:hover {
+  background: var(--row-hover);
+}
+
+.lq-spark {
+  min-width: 84px;
+  padding: 2px 4px !important;
+}
+
+.lq-sparkline {
+  display: block;
+  vertical-align: middle;
+}
+
+.lq-spark-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---- Propagation line tooltip ---- */
+
+.prop-line-tooltip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* ==========================================================================
+   Phase 4 additions
+   ========================================================================== */
+
+/* ---- Ground Stations tab — heard-by badge ---- */
+
+.gs-heardby-badge {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+  color: var(--accent);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+}
+
+/* ---- Propagation tab ---- */
+
+#propagation-grid {
+  padding: 12px 16px;
+  overflow: auto;
+}
+
+.prop-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.prop-summary__stat {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.prop-summary__updated {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.prop-matrix-wrap {
+  overflow-x: auto;
+}
+
+.prop-matrix {
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 400px;
+}
+
+.prop-matrix th,
+.prop-matrix td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.prop-matrix th {
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.prop-ac-col {
+  text-align: left !important;
+  min-width: 120px;
+}
+
+.prop-gs-col {
+  min-width: 60px;
+}
+
+.prop-gs-name {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 70px;
+}
+
+.prop-ac-cell {
+  text-align: left !important;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.prop-cell {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.prop-cell--strong { background: rgba(63, 185, 80, 0.20); color: var(--green); }
+.prop-cell--ok     { background: rgba(63, 185, 80, 0.08); color: var(--green); }
+.prop-cell--weak   { background: rgba(210, 153, 34, 0.10); color: var(--yellow); }
+.prop-cell--none   { background: transparent; color: transparent; }
+
+.prop-sig {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1;
+}
+
+/* ==========================================================================
+   Phase 2 additions
+   ========================================================================== */
+
+/* ---- Ground Stations tab — SPDU badges ---- */
+
+.gs-spdu-badge {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 6px;
+  font-weight: 600;
+}
+
+.gs-spdu-badge--active {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(63, 185, 80, 0.4);
+}
+
+.gs-sync-badge {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+}
+
+.gs-sync-badge--ok {
+  color: var(--green);
+}
+
+.gs-sync-badge--bad {
+  color: var(--red);
+}
+
+.gs-card--spdu {
+  border-color: rgba(63, 185, 80, 0.3);
+}
+
+.gs-freq-net-dot {
+  color: var(--green);
+  font-size: 16px;
+  line-height: 0;
+  vertical-align: middle;
+  margin: 0 1px;
+}
+
+/* ---- dumphfdl version label in status bar ---- */
+
+.dumphfdl-ver {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+/* ---- Network tab ---- */
+
+#network-grid {
+  padding: 12px 16px;
+  overflow-y: auto;
+}
+
+.net-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.net-summary__stat {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.net-summary__stat--active {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.net-summary__updated {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.net-gs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.net-gs-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  opacity: 0.65;
+  transition: opacity 0.2s;
+}
+
+.net-gs-card--active {
+  opacity: 1;
+  border-color: rgba(63, 185, 80, 0.35);
+}
+
+.net-gs-card__header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.net-gs-id {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.net-gs-loc {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.net-gs-card__badges {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.net-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.net-badge--active {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(63, 185, 80, 0.4);
+}
+
+.net-badge--inactive {
+  background: rgba(139, 148, 158, 0.1);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.net-badge--sync {
+  color: var(--green);
+  border: 1px solid rgba(63, 185, 80, 0.3);
+}
+
+.net-badge--nosync {
+  color: var(--red);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+.net-last-seen {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.net-gs-card__freqs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.net-freq {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(139, 148, 158, 0.1);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.net-freq--active {
+  background: rgba(63, 185, 80, 0.12);
+  color: var(--green);
+  border-color: rgba(63, 185, 80, 0.35);
+  font-weight: 600;
+}
+
+.net-slot {
+  font-size: 9px;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+.net-no-freqs {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}

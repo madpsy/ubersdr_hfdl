@@ -644,9 +644,13 @@ const gsHeardSet = new Set();
 const gsMarkers = {}; // gs_id → L.marker
 
 function makeGSIcon(gs) {
-  const heard   = gs.last_heard && gs.last_heard > 0;
-  const colour  = gsColorFor(gs.gs_id);
-  const opacity = heard ? 1 : 0.35;
+  const heard  = gs.last_heard && gs.last_heard > 0;
+  const colour = gsColorFor(gs.gs_id);
+  // Phase 2d: three opacity levels
+  //   1.0 — SPDU-active (network is advertising this GS right now)
+  //   0.7 — heard by receiver but not SPDU-active
+  //   0.25 — neither heard nor SPDU-active
+  const opacity = gs.spdu_active ? 1.0 : heard ? 0.7 : 0.25;
   return L.divIcon({
     className: '',
     html: `<div class="gs-marker" style="color:${colour};opacity:${opacity}" title="${esc(gs.location)}">` +
@@ -659,6 +663,48 @@ function makeGSIcon(gs) {
   });
 }
 
+// Build the GS popup HTML — shared between initial creation and mouseover rebuild.
+function buildGSPopup(gs, distKm) {
+  const lastHeardStr = gs.last_heard
+    ? new Date(gs.last_heard * 1000).toUTCString().replace('GMT', 'UTC')
+    : 'Never';
+  const freqLine = gs.heard_freqs_khz && gs.heard_freqs_khz.length
+    ? `<br>Heard on: ${gs.heard_freqs_khz.map(f => (f / 1000).toFixed(3) + ' MHz').join(', ')}`
+    : '';
+  const sigLine = gs.last_sig_level
+    ? `<br>Last signal: ${gs.last_sig_level.toFixed(1)} dBFS`
+    : '';
+  const distLine = distKm !== null && distKm !== undefined
+    ? `<br>Distance: ${fmtKm(distKm)}`
+    : '';
+  // Section 7.4: SPDU-derived fields
+  const spduLine = gs.spdu_active
+    ? `<br><span style="color:#3fb950">● SPDU active</span>`
+    : (gs.spdu_last_seen ? `<br><span style="color:#8b949e">○ SPDU last seen ${new Date(gs.spdu_last_seen*1000).toUTCString().replace('GMT','UTC')}</span>` : '');
+  const syncLine = gs.spdu_last_seen
+    ? (gs.utc_sync ? `<br>UTC sync: ✓` : `<br>UTC sync: ✗`)
+    : '';
+  const activeFreqLine = gs.active_freqs_khz && gs.active_freqs_khz.length
+    ? `<br>Active slots: ${gs.active_freqs_khz.map(f => (f/1000).toFixed(3)+' MHz').join(', ')}`
+    : '';
+  // Heard-by count from propHeardByGS (defined in app.js)
+  const heardByCount = (typeof propHeardByGS !== 'undefined' && propHeardByGS[gs.gs_id]) || 0;
+  const heardByLine = heardByCount > 0 ? `<br>Heard by: ${heardByCount} aircraft` : '';
+
+  return `<div class="gs-popup">` +
+    `<strong>${esc(gs.location)}</strong><br>` +
+    `GS ID: ${gs.gs_id}` +
+    spduLine +
+    syncLine +
+    `<br>Last heard: ${lastHeardStr}` +
+    sigLine +
+    freqLine +
+    activeFreqLine +
+    heardByLine +
+    distLine +
+    `</div>`;
+}
+
 function loadGSMarkers() {
   fetch('/groundstations')
     .then(r => r.json())
@@ -666,23 +712,8 @@ function loadGSMarkers() {
       if (!Array.isArray(list)) return;
       for (const gs of list) {
         if (!gs.lat || !gs.lon) continue;
-        const icon   = makeGSIcon(gs);
-        const lastHeardStr = gs.last_heard
-          ? new Date(gs.last_heard * 1000).toUTCString().replace('GMT', 'UTC')
-          : 'Never';
-        const freqLine = gs.heard_freqs_khz && gs.heard_freqs_khz.length
-          ? `<br>Heard on: ${gs.heard_freqs_khz.map(f => (f / 1000).toFixed(3) + ' MHz').join(', ')}`
-          : '';
-        const sigLine = gs.last_sig_level
-          ? `<br>Last signal: ${gs.last_sig_level.toFixed(1)} dBFS`
-          : '';
-        const popup = `<div class="gs-popup">` +
-          `<strong>${esc(gs.location)}</strong><br>` +
-          `GS ID: ${gs.gs_id}<br>` +
-          `Last heard: ${lastHeardStr}` +
-          sigLine +
-          freqLine +
-          `</div>`;
+        const icon  = makeGSIcon(gs);
+        const popup = buildGSPopup(gs, null);
         if (gsMarkers[gs.gs_id]) {
           gsMarkers[gs.gs_id].setIcon(icon).setPopupContent(popup);
         } else {
@@ -695,28 +726,7 @@ function loadGSMarkers() {
             // Rebuild popup with live distance (receiverLatLng may have arrived
             // after the marker was first created).
             const distKm = distanceToReceiverKm(gs.lat, gs.lon);
-            const distLine = distKm !== null
-              ? `<br>Distance: ${fmtKm(distKm)}`
-              : '';
-            const lastHeardStr2 = gs.last_heard
-              ? new Date(gs.last_heard * 1000).toUTCString().replace('GMT', 'UTC')
-              : 'Never';
-            const freqLine2 = gs.heard_freqs_khz && gs.heard_freqs_khz.length
-              ? `<br>Heard on: ${gs.heard_freqs_khz.map(f => (f / 1000).toFixed(3) + ' MHz').join(', ')}`
-              : '';
-            const sigLine2 = gs.last_sig_level
-              ? `<br>Last signal: ${gs.last_sig_level.toFixed(1)} dBFS`
-              : '';
-            m.setPopupContent(
-              `<div class="gs-popup">` +
-              `<strong>${esc(gs.location)}</strong><br>` +
-              `GS ID: ${gs.gs_id}<br>` +
-              `Last heard: ${lastHeardStr2}` +
-              sigLine2 +
-              freqLine2 +
-              distLine +
-              `</div>`
-            );
+            m.setPopupContent(buildGSPopup(gs, distKm));
             m.openPopup();
             showRxLine(gs.lat, gs.lon);
           });
@@ -873,6 +883,75 @@ function togglePlanes(visible) {
   applyBandFilter();
 }
 
+// ---- Propagation layer (Phase 4c) ------------------------------------------
+// Faint great-circle lines from GS markers to aircraft that report hearing them.
+
+let propagationLayerGroup = null;
+let showPropagationLayer  = false;
+
+function updatePropagationLayer() {
+  if (!hfdlMap) return;
+  if (propagationLayerGroup) {
+    propagationLayerGroup.clearLayers();
+  } else {
+    propagationLayerGroup = L.layerGroup();
+    if (showPropagationLayer) propagationLayerGroup.addTo(hfdlMap);
+  }
+  if (!showPropagationLayer) return;
+
+  fetch('/propagation')
+    .then(r => r.json())
+    .then(snap => {
+      if (!snap || !snap.paths) return;
+      if (!propagationLayerGroup) return;
+      propagationLayerGroup.clearLayers();
+
+      for (const p of snap.paths) {
+        // Find GS position from gsMarkers
+        const gsMarker = gsMarkers[p.gs_id];
+        if (!gsMarker) continue;
+        const gsLatLng = gsMarker.getLatLng();
+
+        // Find aircraft position from aircraftMarkers
+        const acMarker = aircraftMarkers[p.aircraft_key];
+        if (!acMarker) continue;
+        const acLatLng = acMarker.getLatLng();
+
+        // Draw a faint great-circle line
+        const pts = greatCirclePoints(
+          gsLatLng.lat, gsLatLng.lng,
+          acLatLng.lat, acLatLng.lng,
+          32
+        );
+        const line = L.polyline(pts, {
+          color: '#58a6ff',
+          weight: 1,
+          opacity: 0.25,
+          dashArray: '4 6',
+          interactive: false,
+        });
+        const label = [p.reg, p.flight, p.icao ? `(${p.icao})` : ''].filter(Boolean).join(' ') || p.aircraft_key;
+        line.bindTooltip(
+          `${esc(p.gs_location)} → ${esc(label)}<br>${p.freq_khz ? (p.freq_khz/1000).toFixed(3)+' MHz' : ''} ${p.sig_level ? p.sig_level.toFixed(1)+' dBFS' : ''}`,
+          { sticky: true, className: 'prop-line-tooltip' }
+        );
+        propagationLayerGroup.addLayer(line);
+      }
+    })
+    .catch(() => {});
+}
+
+function togglePropagationLayer(visible) {
+  showPropagationLayer = visible;
+  if (!hfdlMap || !propagationLayerGroup) return;
+  if (visible) {
+    propagationLayerGroup.addTo(hfdlMap);
+    updatePropagationLayer();
+  } else {
+    hfdlMap.removeLayer(propagationLayerGroup);
+  }
+}
+
 // ---- Layer toggle control --------------------------------------------------
 let layerControl = null;
 
@@ -906,6 +985,10 @@ function initLayerControl() {
         `<span>Coverage arc</span>` +
       `</label>` +
       `<label class="map-layer-ctrl__row">` +
+        `<input type="checkbox" id="lyr-propagation">` +
+        `<span>Propagation paths</span>` +
+      `</label>` +
+      `<label class="map-layer-ctrl__row">` +
         `<input type="checkbox" id="lyr-autofit" checked>` +
         `<span>Auto fit</span>` +
       `</label>`;
@@ -924,6 +1007,9 @@ function initLayerControl() {
     });
     div.querySelector('#lyr-arc').addEventListener('change', e => {
       toggleArcLayer(e.target.checked);
+    });
+    div.querySelector('#lyr-propagation').addEventListener('change', e => {
+      togglePropagationLayer(e.target.checked);
     });
     div.querySelector('#lyr-autofit').addEventListener('change', e => {
       autoFit = e.target.checked;
@@ -1338,6 +1424,28 @@ function buildPopup(ac) {
   const distHtml = distKm !== null
     ? `Distance: ${fmtKm(distKm)}<br>`
     : '';
+  // Section 2.6.4: ADS-C altitude
+  const altHtml = ac.alt_valid && ac.alt_ft
+    ? `Altitude: ${Math.round(ac.alt_ft).toLocaleString()} ft<br>`
+    : '';
+  // Section 7.4: Phase 3 fields in aircraft popup
+  const dlIcon = ac.current_link
+    ? (() => {
+        switch (ac.current_link.toUpperCase()) {
+          case 'HF':     return '📻 HF';
+          case 'VHF':    return '📶 VHF';
+          case 'SATCOM': return '🛰 SATCOM';
+          default:       return esc(ac.current_link);
+        }
+      })()
+    : null;
+  const dlHtml = dlIcon ? `Datalink: ${dlIcon}<br>` : '';
+  const lqHtml = (ac.error_rate != null && (ac.mpdu_rx || ac.mpdu_tx))
+    ? `Link quality: ${ac.error_rate.toFixed(1)}% err (${ac.mpdu_rx || 0} rx / ${ac.mpdu_tx || 0} tx)<br>`
+    : '';
+  const fccHtml = ac.last_freq_change_cause
+    ? `Freq change: ${esc(ac.last_freq_change_cause)}<br>`
+    : '';
   return `
     <div class="ac-popup">
       <strong>${esc(label)}</strong><br>
@@ -1347,6 +1455,10 @@ function buildPopup(ac) {
       Freq: ${ac.freq_khz ? ac.freq_khz.toLocaleString() + ' kHz' : '—'}<br>
       ${gsName ? `Via: ${esc(gsName)}<br>` : ''}
       ${sigHtml}
+      ${altHtml}
+      ${dlHtml}
+      ${lqHtml}
+      ${fccHtml}
       ${distHtml}
       ${ac.msg_count ? `Messages: ${ac.msg_count.toLocaleString()}<br>` : ''}
       Last seen: ${lastSeen}

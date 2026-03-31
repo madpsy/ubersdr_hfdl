@@ -359,12 +359,45 @@ func startWebServer(port int, staticDir string, store *statsStore, instances []*
 		}
 	})
 
-	// /groundstations — full ground station list with frequencies and last-heard times
+	// /groundstations — full ground station list with frequencies, last-heard times, and SPDU state
 	mux.HandleFunc("/groundstations", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		if err := json.NewEncoder(w).Encode(store.groundStationsSnapshot()); err != nil {
 			log.Printf("web: /groundstations encode error: %v", err)
+		}
+	})
+
+	// /network — SPDU-derived network topology (all GS advertised active slots)
+	mux.HandleFunc("/network", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		snap := store.networkSnapshot()
+		if snap == nil {
+			snap = []NetworkGSState{}
+		}
+		if err := json.NewEncoder(w).Encode(snap); err != nil {
+			log.Printf("web: /network encode error: %v", err)
+		}
+	})
+
+	// /propagation — aircraft→GS propagation paths from freq_data[]
+	mux.HandleFunc("/propagation", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		snap := store.propagationSnapshot()
+		if err := json.NewEncoder(w).Encode(snap); err != nil {
+			log.Printf("web: /propagation encode error: %v", err)
+		}
+	})
+
+	// /weather — ACARS label H1/WX weather message ring buffer
+	mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		msgs := store.weatherSnapshot()
+		if err := json.NewEncoder(w).Encode(msgs); err != nil {
+			log.Printf("web: /weather encode error: %v", err)
 		}
 	})
 

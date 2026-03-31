@@ -26,11 +26,19 @@
     <button class="tab-btn active" data-tab="map">🗺 Map</button>
     <button class="tab-btn" data-tab="stats">📊 Frequencies</button>
     <button class="tab-btn" data-tab="feed">📡 Live Feed</button>
+    <button class="tab-btn" data-tab="messages">✉ Messages</button>
+    <button class="tab-btn" data-tab="events">🔔 Events</button>
     <button class="tab-btn" data-tab="gs">📻 Ground Stations</button>
+    <button class="tab-btn" data-tab="network">🌐 Network</button>
     <button class="tab-btn" data-tab="planes">✈ Planes</button>
+    <button class="tab-btn" data-tab="lq">📉 Link Quality</button>
+    <button class="tab-btn" data-tab="propagation">📶 Propagation</button>
     <button class="tab-btn" data-tab="instances">⚙ Instances</button>
     <button class="tab-btn" data-tab="signal">📈 Signal</button>
   </nav>
+
+  <!-- Toast notification container (Phase 1c) -->
+  <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
   <main>
 
@@ -68,10 +76,69 @@
             <th>Dst</th>
             <th>Type</th>
             <th>Reg / Flight</th>
+            <th>Datalink</th>
+            <th>Message</th>
           </tr>
         </thead>
         <tbody id="feed-tbody">
-          <tr><td colspan="9" class="empty">Waiting for messages…</td></tr>
+          <tr><td colspan="11" class="empty">Waiting for messages…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Messages tab (Phase 1b) -->
+    <section id="tab-messages" class="tab-panel">
+      <div class="tab-toolbar">
+        <input type="text" id="msg-filter-reg" class="filter-input" placeholder="Reg / ICAO…" />
+        <input type="text" id="msg-filter-flight" class="filter-input" placeholder="Flight…" />
+        <input type="text" id="msg-filter-label" class="filter-input" placeholder="Label…" />
+        <button id="msg-filter-clear" class="toolbar-btn">✕ Clear</button>
+        <span id="msg-count-label" class="filter-count"></span>
+      </div>
+      <table id="messages-table">
+        <thead>
+          <tr>
+            <th>Time (UTC)</th>
+            <th>Reg</th>
+            <th>Flight</th>
+            <th>Label</th>
+            <th>Sub</th>
+            <th>GS</th>
+            <th>Freq (kHz)</th>
+            <th class="msg-text-col">Message text</th>
+          </tr>
+        </thead>
+        <tbody id="messages-tbody">
+          <tr><td colspan="8" class="empty">No ACARS messages yet…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Events tab (Phase 1c) -->
+    <section id="tab-events" class="tab-panel">
+      <div class="tab-toolbar">
+        <select id="evt-filter-type" class="filter-select">
+          <option value="">All event types</option>
+          <option value="logon">Logon</option>
+          <option value="logoff">Logoff</option>
+          <option value="gs_event">GS Event</option>
+          <option value="message">Frame</option>
+        </select>
+        <button id="evt-filter-clear" class="toolbar-btn">✕ Clear</button>
+        <span id="evt-count-label" class="filter-count"></span>
+      </div>
+      <table id="events-table">
+        <thead>
+          <tr>
+            <th>Time (UTC)</th>
+            <th>Type</th>
+            <th>Aircraft / GS</th>
+            <th>Freq (kHz)</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody id="events-tbody">
+          <tr><td colspan="5" class="empty">No events yet…</td></tr>
         </tbody>
       </table>
     </section>
@@ -99,6 +166,21 @@
       <div id="gs-grid"></div>
     </section>
 
+    <!-- Network tab (Phase 2) -->
+    <section id="tab-network" class="tab-panel">
+      <div id="network-grid"></div>
+    </section>
+
+    <!-- Link Quality tab -->
+    <section id="tab-lq" class="tab-panel">
+      <div id="lq-content"></div>
+    </section>
+
+    <!-- Propagation tab (Phase 4) -->
+    <section id="tab-propagation" class="tab-panel">
+      <div id="propagation-grid"></div>
+    </section>
+
     <!-- Planes tab -->
     <section id="tab-planes" class="tab-panel">
       <table id="planes-table">
@@ -111,13 +193,16 @@
             <th>Lon</th>
             <th>Freq (kHz)</th>
             <th>Ground Station</th>
+            <th>Datalink</th>
             <th>Signal</th>
+            <th>Link Quality</th>
+            <th>Freq Change</th>
             <th>Messages</th>
             <th>Last Seen</th>
           </tr>
         </thead>
         <tbody id="planes-tbody">
-          <tr><td colspan="10" class="empty">No aircraft seen yet…</td></tr>
+          <tr><td colspan="13" class="empty">No aircraft seen yet…</td></tr>
         </tbody>
       </table>
     </section>
@@ -193,7 +278,10 @@
   <!-- Chart.js (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
   <script src="map.js?v=2"></script>
+  <script src="network.js?v=1"></script>
+  <script src="propagation.js?v=1"></script>
+  <script src="linkquality.js?v=1"></script>
 </body>
 </html>
