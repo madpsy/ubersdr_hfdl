@@ -988,6 +988,10 @@ function updatePropagationLayer() {
       propagationLayerGroup.clearLayers();
 
       for (const p of snap.paths) {
+        // Filter: if an aircraft or GS is selected, only show paths relevant to it
+        if (selectedKey && p.aircraft_key !== selectedKey) continue;
+        if (selectedGS !== null && p.gs_id !== selectedGS) continue;
+
         // Find GS position from gsMarkers
         const gsMarker = gsMarkers[p.gs_id];
         if (!gsMarker) continue;
@@ -1005,10 +1009,10 @@ function updatePropagationLayer() {
           32
         );
         const line = L.polyline(pts, {
-          color: '#58a6ff',
+          color: '#f0a500',  // amber — visible over both sea and land
           weight: 2,
-          opacity: 0.55,
-          dashArray: '6 5',
+          opacity: 0.7,
+          dashArray: '8 5',
           interactive: false,
         });
         const label = [p.reg, p.flight, p.icao ? `(${p.icao})` : ''].filter(Boolean).join(' ') || p.aircraft_key;
@@ -1445,6 +1449,8 @@ function initMap() {
   setInterval(loadGSMarkers, 30_000);
   updateGreyline();
   setInterval(updateGreyline, 60_000);
+  // Refresh propagation paths every 30 s when the layer is visible
+  setInterval(() => { if (showPropagationLayer) updatePropagationLayer(); }, 30_000);
   initLayerControl();
   initMapSearch();
 
@@ -1667,6 +1673,8 @@ function selectAircraft(key) {
       }).addTo(hfdlMap);
     })
     .catch(err => console.warn('track fetch error:', err));
+  // Refresh propagation layer to show only this aircraft's paths
+  if (showPropagationLayer) updatePropagationLayer();
 }
 
 function deselectAircraft() {
@@ -1684,6 +1692,8 @@ function deselectAircraft() {
     const ac = aircraftData[k];
     if (ac) marker.setIcon(makePlaneIcon(ac, false));
   }
+  // Restore all propagation paths
+  if (showPropagationLayer) updatePropagationLayer();
 }
 
 // ---- GS selection ----------------------------------------------------------
@@ -1701,6 +1711,8 @@ function selectGS(gsId) {
     const ac = aircraftData[k];
     if (ac) marker.setIcon(makePlaneIcon(ac, false));
   }
+  // Show only paths for this GS
+  if (showPropagationLayer) updatePropagationLayer();
 }
 
 function deselectGS() {
@@ -1712,6 +1724,8 @@ function deselectGS() {
     const ac = aircraftData[k];
     if (ac) marker.setIcon(makePlaneIcon(ac, false));
   }
+  // Restore all propagation paths
+  if (showPropagationLayer) updatePropagationLayer();
 }
 
 // ---- Aircraft count --------------------------------------------------------
