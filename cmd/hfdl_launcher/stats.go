@@ -465,6 +465,8 @@ type RecentMessage struct {
 	MsgText  string `json:"msg_text,omitempty"`
 	// Section 7.1: current datalink for Live Feed column
 	CurrentLink string `json:"current_link,omitempty"`
+	// Resolved ICAO for src/dst (from slot map or ac_info)
+	SrcICAO string `json:"src_icao,omitempty"`
 	// Section 2.3: logon/logoff detail
 	AssignedAcID int    `json:"assigned_ac_id,omitempty"`
 	ReasonCode   int    `json:"reason_code,omitempty"`
@@ -705,6 +707,10 @@ func (s *statsStore) ingest(line string) {
 			if mapped := s.slotMap[slotKey]; mapped != "" {
 				icao = mapped
 			}
+		}
+		// Populate resolved ICAO in RecentMessage so Live Feed can show it
+		if icao != "" {
+			rm.SrcICAO = icao
 		}
 		reg := ""
 		flight := ""

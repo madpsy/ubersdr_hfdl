@@ -73,12 +73,13 @@ const freqMsgCounts = new Map();
 // GS has been seen as the destination of a message.
 let dstFreqsByGS = {};
 
-function gsLabel(type, id) {
+function gsLabel(type, id, icao) {
   if (type === 'Ground station' && gsNames[id]) {
     return `${gsNames[id]} (${id})`;
   }
   if (type === 'Aircraft') {
-    return `Aircraft ${id}`;
+    // Show ICAO if known, otherwise fall back to slot ID
+    return icao ? esc(icao) : `Aircraft ${id}`;
   }
   return type ? `${esc(type)} ${id}` : '—';
 }
@@ -191,7 +192,7 @@ function buildFeedRow(msg) {
   const bps     = msg.bit_rate || '—';
   const sigCls  = sigClass(msg.sig_level);
   const sig     = msg.sig_level != null ? msg.sig_level.toFixed(1) : '—';
-  const src     = gsLabel(msg.src_type, msg.src_id);
+  const src     = gsLabel(msg.src_type, msg.src_id, msg.src_icao);
   const dst     = msg.dst_type ? gsLabel(msg.dst_type, msg.dst_id) : '—';
   const typeCls = msg.msg_type === 'SPDU' ? 'type-spdu' : 'type-lpdu';
   const type    = esc(msg.msg_type) || '—';
@@ -242,14 +243,16 @@ function prependFeedRow(msg) {
 // key-value pairs. Used for H1 messages that contain structured free-text.
 
 const ARINC620_FIELDS = {
-  'AN': 'Aircraft', 'FI': 'Flight', 'OR': 'Origin', 'DS': 'Destination',
+  'AN': 'Aircraft', 'FI': 'Flight', 'FN': 'Flight No',
+  'OR': 'Origin', 'DS': 'Destination',
   'DP': 'Departure', 'AR': 'Arrival', 'ETA': 'ETA', 'ATA': 'ATA',
   'ETD': 'ETD', 'ATD': 'ATD', 'GL': 'Gate', 'MA': 'Mach/Alt',
   'WT': 'Weight', 'FU': 'Fuel', 'FB': 'Fuel Burn', 'FR': 'Fuel Remaining',
+  'FOB': 'Fuel on Board',
   'OA': 'OAT', 'WS': 'Wind Speed', 'WD': 'Wind Dir',
   'TA': 'True Airspeed', 'GS': 'Ground Speed', 'AL': 'Altitude',
   'LA': 'Latitude', 'LO': 'Longitude', 'PO': 'Position',
-  'TI': 'Time', 'DT': 'Date/Time', 'RM': 'Remarks', 'TX': 'Text',
+  'TI': 'Time', 'DT': 'Departure Data', 'RM': 'Remarks', 'TX': 'Text',
   'MR': 'Message Ref', 'ST': 'Status', 'CF': 'Config',
   'EC': 'Engine Condition', 'EI': 'Engine Indication',
   'LB': 'Load Balance', 'TD': 'Takeoff Data', 'LD': 'Landing Data',
@@ -259,28 +262,112 @@ const ARINC620_FIELDS = {
   'SP': 'Speed', 'HD': 'Heading', 'TK': 'Track', 'VS': 'Vert Speed',
   'FL': 'Flight Level', 'WX': 'Weather', 'TU': 'Turbulence',
   'IC': 'Icing', 'CB': 'CB Activity',
+  'PRG': 'Position Report', 'OFF': 'Takeoff', 'LND': 'Landing',
+  'AGM': 'Ground Message', 'ATA': 'Actual Arrival',
 };
+
+// ---- Label 16 weather/position observation decoder -----------------------
+// Format: HHMMSS,AAAAA,SSSS,HHH,N DD.DDD E DDD.DDD
+// Example: 170130,33994,1915, 103,N 51.007 E 51.808
+
+function decodeLabel16(msgText) {
+  if (!msgText) return null;
+  const parts = msgText.trim().split(',');
+  if (parts.length < 5) return null;
+
+  const timeStr = parts[0].trim();
+  const altStr  = parts[1].trim();
+  const spdStr  = parts[2].trim();
+  const hdgStr  = parts[3].trim();
+  const posStr  = parts.slice(4).join(',').trim();
+
+  const result = [];
+
+  // Time: HHMMSS
+  if (/^\d{6}$/.test(timeStr)) {
+    result.push(`Time: ${timeStr.slice(0,2)}:${timeStr.slice(2,4)}:${timeStr.slice(4,6)} UTC`);
+  }
+  // Altitude in feet
+  const alt = parseFloat(altStr);
+  if (!isNaN(alt) && alt > 0) {
+    result.push(`Alt: ${Math.round(alt).toLocaleString()} ft`);
+  }
+  // Speed in knots (may be encoded as tenths)
+  const spd = parseFloat(spdStr);
+  if (!isNaN(spd) && spd > 0) {
+    result.push(`Speed: ${(spd / 10).toFixed(0)} kts`);
+  }
+  // Heading
+  const hdg = parseFloat(hdgStr);
+  if (!isNaN(hdg)) {
+    result.push(`Track: ${Math.round(hdg)}°`);
+  }
+  // Position: N DD.DDD E DDD.DDD
+  const posM = posStr.match(/([NS])\s*([\d.]+)\s*([EW])\s*([\d.]+)/);
+  if (posM) {
+    const lat = (posM[1] === 'S' ? '-' : '') + posM[2] + '°' + posM[1];
+    const lon = (posM[3] === 'W' ? '-' : '') + posM[4] + '°' + posM[3];
+    result.push(`Pos: ${lat} ${lon}`);
+  }
+
+  return result.length > 0 ? result.join(' · ') : null;
+}
+
+// These codes are message type prefixes, not field codes with values
+const ARINC620_TYPE_PREFIXES = new Set(['PRG', 'OFF', 'LND', 'AGM', 'DFD', 'ARR', 'DEP']);
 
 function decodeArinc620(msgText) {
   if (!msgText) return null;
   const lines = msgText.split(/\r?\n/);
   const pairs = [];
+  let msgTypeLabel = null;
 
   for (const line of lines) {
     // Fields may be slash-separated on one line or on separate lines
     const segments = line.trim().split('/');
     for (const seg of segments) {
-      const m = seg.trim().match(/^([A-Z]{2,3})\s+(.+)$/);
+      const trimmed = seg.trim();
+      if (!trimmed) continue;
+
+      // Check if this segment is a message type prefix (no value)
+      if (ARINC620_TYPE_PREFIXES.has(trimmed)) {
+        if (!msgTypeLabel) msgTypeLabel = ARINC620_FIELDS[trimmed] || trimmed;
+        continue;
+      }
+
+      // Try two patterns:
+      // 1. "XX value" — space-separated (standard ARINC 620)
+      // 2. "XXvalue"  — no space (compact format used by some airlines)
+      let m = trimmed.match(/^([A-Z]{2,3})\s+(.+)$/);
+      if (!m) {
+        // Try matching known field codes at the start without a space
+        for (const code of Object.keys(ARINC620_FIELDS)) {
+          if (ARINC620_TYPE_PREFIXES.has(code)) continue; // skip type prefixes
+          if (trimmed.startsWith(code) && trimmed.length > code.length) {
+            const nextChar = trimmed[code.length];
+            // Only match if next char is not a letter (avoid false matches like "FLIGHT" matching "FL")
+            if (!/[A-Z]/.test(nextChar)) {
+              const val = trimmed.slice(code.length).trim();
+              if (val) {
+                m = [null, code, val];
+                break;
+              }
+            }
+          }
+        }
+      }
       if (m) {
         const code = m[1];
         const val  = m[2].trim();
         const name = ARINC620_FIELDS[code];
-        if (name) pairs.push(`${name}: ${val}`);
+        if (name && !ARINC620_TYPE_PREFIXES.has(code)) pairs.push(`${name}: ${val}`);
       }
     }
   }
 
-  return pairs.length > 0 ? pairs.join(' · ') : null;
+  if (pairs.length === 0) return null;
+  const prefix = msgTypeLabel ? `[${msgTypeLabel}] ` : '';
+  return prefix + pairs.join(' · ');
 }
 
 // ---- Media Advisory (SA) decoder ------------------------------------------
@@ -508,6 +595,9 @@ function renderMessagesTable() {
     if (msg.label === 'SA' && msg.msg_text) {
       // Media Advisory — decode datalink status
       decodedText = decodeMediaAdvisory(msg.msg_text);
+    } else if (msg.label === '16' && msg.msg_text) {
+      // Label 16 weather/position observation
+      decodedText = decodeLabel16(msg.msg_text);
     } else if (msg.msg_text && !msg.msg_text.startsWith('POS')) {
       // Try ARINC 620 field decoder for any label that may contain structured free-text
       // (H1, C1, B6, Q0, etc.) — skip POS reports which are already decoded by backend
@@ -593,8 +683,11 @@ function evtActor(evt) {
   if (evt._evtType === 'gs_event') {
     return esc(evt.location || `GS ${evt.gs_id}`);
   }
+  // Use reg/flight/icao if available, then src_icao from slot map, then slot ID
   const parts = [esc(evt.reg), esc(evt.flight), evt.icao ? `(${esc(evt.icao)})` : ''].filter(Boolean);
-  return parts.join(' ') || (evt.src_id ? `Aircraft ${evt.src_id}` : '—');
+  if (parts.length > 0) return parts.join(' ');
+  if (evt.src_icao) return esc(evt.src_icao);
+  return evt.src_id ? `Aircraft ${evt.src_id}` : '—';
 }
 
 function evtDetail(evt) {
