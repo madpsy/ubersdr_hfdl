@@ -11,6 +11,52 @@ import (
 	"time"
 )
 
+// parseLabel16Obs attempts to parse an ACARS label 16 weather/position observation.
+//
+// Format: HHMMSS,AAAAA,SSSS,HHH,N DD.DDD E DDD.DDD
+// Example: 170130,33994,1915, 103,N 51.007 E 51.808
+//
+// Returns lat, lon, altFt, headingDeg, ok.
+func parseLabel16Obs(msgText string) (lat, lon, altFt, heading float64, ok bool) {
+	// Split on commas — expect at least 5 fields
+	parts := strings.SplitN(strings.TrimSpace(msgText), ",", 6)
+	if len(parts) < 5 {
+		return
+	}
+	// parts[1] = altitude in feet
+	alt, err1 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err1 == nil && alt > 0 {
+		altFt = alt
+	}
+	// parts[3] = heading in degrees
+	hdg, err2 := strconv.ParseFloat(strings.TrimSpace(parts[3]), 64)
+	if err2 == nil {
+		heading = hdg
+	}
+	// parts[4] = "N DD.DDD E DDD.DDD" or "S DD.DDD W DDD.DDD"
+	posStr := strings.TrimSpace(parts[4])
+	// Parse: <NS> <lat> <EW> <lon>
+	var ns, ew string
+	var latVal, lonVal float64
+	n, err3 := fmt.Sscanf(posStr, "%s %f %s %f", &ns, &latVal, &ew, &lonVal)
+	if err3 != nil || n < 4 {
+		return
+	}
+	lat = latVal
+	if ns == "S" {
+		lat = -lat
+	}
+	lon = lonVal
+	if ew == "W" {
+		lon = -lon
+	}
+	if !isValidPos(lat, lon) {
+		return
+	}
+	ok = true
+	return
+}
+
 // parseArinc620Pos attempts to parse an ARINC 620 free-text position report
 // from an H1/M1 (or similar) ACARS msg_text.
 //
@@ -670,6 +716,56 @@ func (s *statsStore) ingest(line string) {
 				rm.Label = h.LPDU.HFNPDU.ACARS.Label
 				rm.Sublabel = h.LPDU.HFNPDU.ACARS.Sublabel
 				rm.MsgText = h.LPDU.HFNPDU.ACARS.MsgText
+				// Label 16 weather/position observation parser
+				if h.LPDU.HFNPDU.ACARS.Label == "16" && h.LPDU.HFNPDU.ACARS.MsgText != "" {
+					if l16Lat, l16Lon, l16Alt, l16Hdg, l16Ok :=
+						parseLabel16Obs(h.LPDU.HFNPDU.ACARS.MsgText); l16Ok {
+						l16AcKey := icao
+						if l16AcKey == "" {
+							l16AcKey = strings.TrimPrefix(h.LPDU.HFNPDU.ACARS.Reg, ".")
+						}
+						if l16AcKey == "" {
+							l16AcKey = strings.TrimPrefix(h.LPDU.HFNPDU.ACARS.Flight, ".")
+						}
+						if l16AcKey != "" {
+							ac := s.aircraft[l16AcKey]
+							if ac == nil {
+								ac = &AircraftState{Key: l16AcKey}
+								s.aircraft[l16AcKey] = ac
+							}
+							if !isValidPos(ac.Lat, ac.Lon) || ac.LastSeen < now-300 {
+								ac.Lat = l16Lat
+								ac.Lon = l16Lon
+								ac.LastSeen = now
+								ac.FreqKHz = freqKHz
+								if h.LPDU.Dst.Type == "Ground station" {
+									ac.GSID = h.LPDU.Dst.ID
+								} else if h.LPDU.Src.Type == "Ground station" {
+									ac.GSID = h.LPDU.Src.ID
+								}
+								ac.Track = append(ac.Track, TrackPoint{Lat: l16Lat, Lon: l16Lon, Time: now})
+								if len(ac.Track) > maxTrackPoints {
+									ac.Track = ac.Track[len(ac.Track)-maxTrackPoints:]
+								}
+								if n := len(ac.Track); n >= 2 {
+									prev := ac.Track[n-2]
+									ac.Bearing = bearingDeg(prev.Lat, prev.Lon, l16Lat, l16Lon)
+								}
+								if posUpdate == nil {
+									posUpdate = ac
+								}
+							}
+							if l16Alt > 0 {
+								ac.AltFt = l16Alt
+								ac.AltValid = true
+							}
+							if l16Hdg > 0 {
+								ac.TrueTrkDeg = l16Hdg
+								ac.TrueTrkValid = true
+							}
+						}
+					}
+				}
 				// ARINC 620 position report parser — H1 messages starting with POS
 				// Updates AircraftState with lat/lon/alt/wind from free-text position reports.
 				if h.LPDU.HFNPDU.ACARS.Label == "H1" &&

@@ -237,6 +237,118 @@ function prependFeedRow(msg) {
   }
 }
 
+// ---- ARINC 620 free-text field decoder ------------------------------------
+// Decodes ARINC 620 field codes (AN, FI, GL, MA, etc.) into human-readable
+// key-value pairs. Used for H1 messages that contain structured free-text.
+
+const ARINC620_FIELDS = {
+  'AN': 'Aircraft', 'FI': 'Flight', 'OR': 'Origin', 'DS': 'Destination',
+  'DP': 'Departure', 'AR': 'Arrival', 'ETA': 'ETA', 'ATA': 'ATA',
+  'ETD': 'ETD', 'ATD': 'ATD', 'GL': 'Gate', 'MA': 'Mach/Alt',
+  'WT': 'Weight', 'FU': 'Fuel', 'FB': 'Fuel Burn', 'FR': 'Fuel Remaining',
+  'OA': 'OAT', 'WS': 'Wind Speed', 'WD': 'Wind Dir',
+  'TA': 'True Airspeed', 'GS': 'Ground Speed', 'AL': 'Altitude',
+  'LA': 'Latitude', 'LO': 'Longitude', 'PO': 'Position',
+  'TI': 'Time', 'DT': 'Date/Time', 'RM': 'Remarks', 'TX': 'Text',
+  'MR': 'Message Ref', 'ST': 'Status', 'CF': 'Config',
+  'EC': 'Engine Condition', 'EI': 'Engine Indication',
+  'LB': 'Load Balance', 'TD': 'Takeoff Data', 'LD': 'Landing Data',
+  'CR': 'Crew', 'CA': 'Captain', 'FO': 'First Officer',
+  'PA': 'Passengers', 'BG': 'Baggage', 'CG': 'Cargo',
+  'MX': 'Maintenance', 'DL': 'Delay', 'DI': 'Diversion', 'EM': 'Emergency',
+  'SP': 'Speed', 'HD': 'Heading', 'TK': 'Track', 'VS': 'Vert Speed',
+  'FL': 'Flight Level', 'WX': 'Weather', 'TU': 'Turbulence',
+  'IC': 'Icing', 'CB': 'CB Activity',
+};
+
+function decodeArinc620(msgText) {
+  if (!msgText) return null;
+  const lines = msgText.split(/\r?\n/);
+  const pairs = [];
+
+  for (const line of lines) {
+    // Fields may be slash-separated on one line or on separate lines
+    const segments = line.trim().split('/');
+    for (const seg of segments) {
+      const m = seg.trim().match(/^([A-Z]{2,3})\s+(.+)$/);
+      if (m) {
+        const code = m[1];
+        const val  = m[2].trim();
+        const name = ARINC620_FIELDS[code];
+        if (name) pairs.push(`${name}: ${val}`);
+      }
+    }
+  }
+
+  return pairs.length > 0 ? pairs.join(' · ') : null;
+}
+
+// ---- Media Advisory (SA) decoder ------------------------------------------
+// Decodes the raw msg_text of ACARS label SA messages into human-readable form.
+//
+// Two known formats:
+//   0E<cur><HHMMSS><count><avail...>/   e.g. 0EH1735262SH/
+//   0L<cur><HHMMSS><avail...>           e.g. 0LV173606HS
+//
+// Link codes: H=HF, V=VHF, S=SATCOM, G=GACS, 2=VHF2, 3=VHF3
+
+const MEDIA_ADV_LINKS = {
+  'H': 'HF',
+  'V': 'VHF',
+  'S': 'SATCOM',
+  'G': 'GACS',
+  '2': 'VHF 2',
+  '3': 'VHF 3',
+  'I': 'Iridium',
+};
+
+function decodeMediaAdvisory(msgText) {
+  if (!msgText || msgText.length < 10) return null;
+  // Must start with 0E or 0L (or similar 0x prefix)
+  if (msgText[0] !== '0') return null;
+
+  const subtype = msgText[1]; // E, L, or other
+  const curCode = msgText[2]; // current link code
+  const timeStr = msgText.slice(3, 9); // HHMMSS
+
+  if (!/^\d{6}$/.test(timeStr)) return null;
+
+  const hh = timeStr.slice(0, 2);
+  const mm = timeStr.slice(2, 4);
+  const ss = timeStr.slice(4, 6);
+  const timeFormatted = `${hh}:${mm}:${ss} UTC`;
+
+  const curName = MEDIA_ADV_LINKS[curCode] || curCode;
+
+  // Parse available links
+  let availStr = msgText.slice(9).replace(/\/$/, ''); // strip trailing /
+  let availLinks = [];
+
+  if (subtype === 'E' && availStr.length > 0) {
+    // First char is count, rest are link codes
+    const count = parseInt(availStr[0], 10);
+    if (!isNaN(count)) {
+      for (let i = 1; i <= count && i < availStr.length; i++) {
+        const name = MEDIA_ADV_LINKS[availStr[i]] || availStr[i];
+        availLinks.push(name);
+      }
+    }
+  } else {
+    // Each remaining char is a link code
+    for (const ch of availStr) {
+      if (MEDIA_ADV_LINKS[ch] || /[A-Z0-9]/.test(ch)) {
+        availLinks.push(MEDIA_ADV_LINKS[ch] || ch);
+      }
+    }
+  }
+
+  let result = `Current: ${curName} (${timeFormatted})`;
+  if (availLinks.length > 0) {
+    result += ` · Available: ${availLinks.join(', ')}`;
+  }
+  return result;
+}
+
 // ---- ACARS sublabel lookup (H1 sublabels decoded by libacars) --------------
 // Only official/standardised sublabels are listed here.
 // Airline-specific ones (M1, M2, etc.) are shown as raw codes.
@@ -390,9 +502,19 @@ function renderMessagesTable() {
       ? `${gsNames[msg.dst_id]} (${msg.dst_id})`
       : (msg.dst_id ? `GS ${msg.dst_id}` : '—');
     const weatherCls = isWeatherMsg(msg) ? ' msg-row--weather' : '';
-    const fullText = esc(msg.msg_text || '');
-    const shortText = msg.msg_text && msg.msg_text.length > 120
-      ? esc(msg.msg_text.slice(0, 120)) + '…'
+    // Attempt to decode known message formats into human-readable text.
+    let displayText = msg.msg_text || '';
+    let decodedText = null;
+    if (msg.label === 'SA' && msg.msg_text) {
+      // Media Advisory — decode datalink status
+      decodedText = decodeMediaAdvisory(msg.msg_text);
+    } else if (msg.label === 'H1' && msg.msg_text && !msg.msg_text.startsWith('POS')) {
+      // H1 free-text — try ARINC 620 field decoder (skip POS reports which are already decoded)
+      decodedText = decodeArinc620(msg.msg_text);
+    }
+    const fullText  = decodedText ? esc(decodedText) : esc(displayText);
+    const shortText = !decodedText && displayText.length > 120
+      ? esc(displayText.slice(0, 120)) + '…'
       : fullText;
     return `<tr class="msg-row${weatherCls}">
       <td class="mono dim">${fmtTime(msg.time)}</td>
