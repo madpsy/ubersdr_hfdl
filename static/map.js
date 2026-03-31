@@ -970,11 +970,13 @@ let showPropagationLayer  = false;
 
 function updatePropagationLayer() {
   if (!hfdlMap) return;
-  if (propagationLayerGroup) {
-    propagationLayerGroup.clearLayers();
-  } else {
+  if (!propagationLayerGroup) {
     propagationLayerGroup = L.layerGroup();
-    if (showPropagationLayer) propagationLayerGroup.addTo(hfdlMap);
+  }
+  propagationLayerGroup.clearLayers();
+  // Ensure the group is on the map when visible
+  if (showPropagationLayer && !hfdlMap.hasLayer(propagationLayerGroup)) {
+    propagationLayerGroup.addTo(hfdlMap);
   }
   if (!showPropagationLayer) return;
 
@@ -1022,12 +1024,13 @@ function updatePropagationLayer() {
 
 function togglePropagationLayer(visible) {
   showPropagationLayer = visible;
-  if (!hfdlMap || !propagationLayerGroup) return;
+  if (!hfdlMap) return;
   if (visible) {
-    propagationLayerGroup.addTo(hfdlMap);
+    // updatePropagationLayer creates the group if needed and adds it to the map
     updatePropagationLayer();
-  } else {
+  } else if (propagationLayerGroup) {
     hfdlMap.removeLayer(propagationLayerGroup);
+    propagationLayerGroup.clearLayers();
   }
 }
 
