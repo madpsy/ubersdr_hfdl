@@ -710,6 +710,20 @@ function evtDetail(evt) {
   return esc(evt.msg_type || '');
 }
 
+function evtGS(evt) {
+  // For gs_event the actor IS the GS — no separate GS column needed
+  if (evt._evtType === 'gs_event') return '—';
+  // For logon/logoff the destination is the ground station
+  if (evt.dst_type === 'Ground station' && evt.dst_id) {
+    return esc(gsNames[evt.dst_id] || `GS ${evt.dst_id}`);
+  }
+  // Fallback: src may be the GS (downlink frames)
+  if (evt.src_type === 'Ground station' && evt.src_id) {
+    return esc(gsNames[evt.src_id] || `GS ${evt.src_id}`);
+  }
+  return '—';
+}
+
 function renderEventsTable() {
   const tbody = document.getElementById('events-tbody');
   if (!tbody) return;
@@ -717,15 +731,16 @@ function renderEventsTable() {
   const countEl = document.getElementById('evt-count-label');
   if (countEl) countEl.textContent = `${filtered.length} / ${eventsStore.length}`;
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty">No events match the filter…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No events match the filter…</td></tr>';
     return;
   }
   tbody.innerHTML = filtered.map(evt => {
-    const freq = evt.freq_khz ? evt.freq_khz.toLocaleString() : (evt.freq_khz === 0 ? '—' : '—');
+    const freq = evt.freq_khz ? evt.freq_khz.toLocaleString() : '—';
     return `<tr class="evt-row${evtRowClass(evt)}">
       <td class="mono dim">${fmtTime(evt.time)}</td>
       <td>${evtTypeLabel(evt)}</td>
       <td>${evtActor(evt)}</td>
+      <td class="dim">${evtGS(evt)}</td>
       <td class="mono dim">${freq}</td>
       <td class="dim">${evtDetail(evt)}</td>
     </tr>`;
