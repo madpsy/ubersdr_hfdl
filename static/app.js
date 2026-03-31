@@ -773,12 +773,12 @@ function renderGroundStations(stations) {
       ? `<span class="gs-heardby-badge" title="Heard by ${heardByCount} aircraft (from Frequency Data reports)">👂 ${heardByCount} ac</span>`
       : '';
     // Section 7.3: active slots row — green chips for SPDU-advertised active freqs
-    // that are NOT already shown as heard (to avoid duplication)
+    // that are NOT already shown as heard (to avoid duplication).
+    // Only show if freq > 0 (system table loaded) and not already in configured list.
     let activeSlotsRow = '';
     if (gs.active_freqs_khz && gs.active_freqs_khz.length > 0) {
-      // Only show slots not already in the configured frequency list
       const configuredKHz = new Set((gs.frequencies || []).map(f => f.freq_khz));
-      const extraActive = gs.active_freqs_khz.filter(k => !configuredKHz.has(k));
+      const extraActive = gs.active_freqs_khz.filter(k => k > 0 && !configuredKHz.has(k));
       if (extraActive.length > 0) {
         const chips = extraActive.map(k =>
           `<span class="gs-freq gs-freq--active-slot">${k.toLocaleString()}</span>`
@@ -786,11 +786,14 @@ function renderGroundStations(stations) {
         activeSlotsRow = `<div class="gs-active-slots"><span class="gs-active-slots__label">SPDU active:</span>${chips}</div>`;
       }
     }
+    const hasBadges = !!(heard || gs.spdu_active || gs.spdu_last_seen || heardByCount > 0);
     return `<div class="gs-card${heard ? ' gs-card--heard' : ''}${gs.spdu_active ? ' gs-card--spdu' : ''}">
       <div class="gs-card-header">
-        <span class="gs-id">GS ${gs.gs_id}</span>
-        <span class="gs-location">${esc(gs.location)}</span>
-        ${heardBadge}${spduBadge}${syncBadge}${heardByBadge}
+        <div class="gs-card-header__top">
+          <span class="gs-id">GS ${gs.gs_id}</span>
+          <span class="gs-location">${esc(gs.location)}</span>
+        </div>
+        ${hasBadges ? `<div class="gs-card-header__badges">${heardBadge}${spduBadge}${syncBadge}${heardByBadge}</div>` : ''}
       </div>
       <div class="gs-freqs">${freqs || '<span class="gs-no-freqs">No frequencies</span>'}</div>
       ${activeSlotsRow}

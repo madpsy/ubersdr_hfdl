@@ -28,6 +28,23 @@ const maxRecentMessages = 200
 // JSON message types (subset of dumphfdl's decoded:json output)
 // ---------------------------------------------------------------------------
 
+// mpduBitrateStats holds per-bitrate MPDU counters from pdu_stats.
+// JSON: { "300bps": N, "600bps": N, "1200bps": N, "1800bps": N }
+type mpduBitrateStats struct {
+	Cnt300  int `json:"300bps"`
+	Cnt600  int `json:"600bps"`
+	Cnt1200 int `json:"1200bps"`
+	Cnt1800 int `json:"1800bps"`
+}
+
+// total returns the sum across all bitrates.
+func (m *mpduBitrateStats) total() int {
+	if m == nil {
+		return 0
+	}
+	return m.Cnt300 + m.Cnt600 + m.Cnt1200 + m.Cnt1800
+}
+
 // hfdlMessage is the top-level JSON structure emitted by dumphfdl.
 type hfdlMessage struct {
 	HFDL struct {
@@ -104,27 +121,51 @@ type hfdlMessage struct {
 								FlightID *struct {
 									ID string `json:"id"`
 								} `json:"flight_id"`
+								// earth_ref tag: ground track and speed
+								EarthRef *struct {
+									TrueTrkDeg   float64 `json:"true_trk_deg"`
+									TrueTrkValid bool    `json:"true_trk_valid"`
+									GndSpdKts    float64 `json:"gnd_spd_kts"`
+									VspdFtmin    float64 `json:"vspd_ftmin"`
+								} `json:"earth_ref"`
+								// air_ref tag: true heading and Mach
+								AirRef *struct {
+									TrueHdgDeg   float64 `json:"true_hdg_deg"`
+									TrueHdgValid bool    `json:"true_hdg_valid"`
+									SpdMach      float64 `json:"spd_mach"`
+									VspdFtmin    float64 `json:"vspd_ftmin"`
+								} `json:"air_ref"`
 							} `json:"tags"`
 						} `json:"adsc"`
 					} `json:"arinc622"`
 				} `json:"acars"`
 				// Phase 3a: last frequency change cause
-				LastFreqChangeCause string `json:"last_freq_change_cause"`
+				// JSON: { "code": N, "descr": "..." }
+				LastFreqChangeCause *struct {
+					Code  int    `json:"code"`
+					Descr string `json:"descr"`
+				} `json:"last_freq_change_cause"`
 				// Phase 3b: PDU error statistics
+				// Each counter is an object with per-bitrate counts.
+				// We sum across all bitrates to get a total.
 				PDUStats *struct {
-					MPDU *struct {
-						Rx  int `json:"rx"`
-						Tx  int `json:"tx"`
-						Err int `json:"err"`
-					} `json:"mpdu"`
+					MpdusRxOk  *mpduBitrateStats `json:"mpdus_rx_ok_cnt"`
+					MpdusRxErr *mpduBitrateStats `json:"mpdus_rx_err_cnt"`
+					MpdusTx    *mpduBitrateStats `json:"mpdus_tx_cnt"`
 				} `json:"pdu_stats"`
-				// Phase 3d: aircraft-reported time (Performance Data uses "time",
-				// Frequency Data uses "utc_time" — both are unix seconds)
+				// Phase 3d: aircraft-reported UTC time.
+				// Performance Data (type 209) uses key "time",
+				// Frequency Data (type 213) uses key "utc_time".
+				// Both have { "hour": N, "min": N, "sec": N }.
 				Time *struct {
-					Sec int64 `json:"sec"`
+					Hour int `json:"hour"`
+					Min  int `json:"min"`
+					Sec  int `json:"sec"`
 				} `json:"time"`
 				UTCTime *struct {
-					Sec int64 `json:"sec"`
+					Hour int `json:"hour"`
+					Min  int `json:"min"`
+					Sec  int `json:"sec"`
 				} `json:"utc_time"`
 				// Phase 4a: propagation data from Frequency Data messages (type 213)
 				FreqData []freqDataEntry `json:"freq_data"`
@@ -250,11 +291,16 @@ type AircraftState struct {
 	ErrorRate float64 `json:"error_rate,omitempty"` // 0–100 %
 	// Phase 3c: current datalink type from media-adv
 	CurrentLink string `json:"current_link,omitempty"` // e.g. "HF", "VHF", "SATCOM"
-	// Phase 3d: aircraft-reported UTC time
-	AircraftTime int64 `json:"aircraft_time,omitempty"` // unix seconds
+	// Phase 3d: aircraft-reported UTC time as "HH:MM:SS UTC"
+	AircraftTime string `json:"aircraft_time,omitempty"`
 	// Section 2.6.4: ADS-C altitude from basic_report
 	AltFt    float64 `json:"alt_ft,omitempty"`    // feet, 0 = unknown
 	AltValid bool    `json:"alt_valid,omitempty"` // true if alt_ft was set from ADS-C
+	// ADS-C earth_ref tag: ground track and speed
+	GndSpdKts    float64 `json:"gnd_spd_kts,omitempty"`  // knots
+	VspdFtmin    float64 `json:"vspd_ftmin,omitempty"`   // ft/min (positive = climbing)
+	TrueTrkDeg   float64 `json:"true_trk_deg,omitempty"` // degrees true
+	TrueTrkValid bool    `json:"true_trk_valid,omitempty"`
 }
 
 // RecentMessage is a trimmed record for the live feed.
@@ -563,18 +609,24 @@ func (s *statsStore) ingest(line string) {
 					existing.Flight = flight
 				}
 				// Phase 3a: last frequency change cause
-				if h.LPDU.HFNPDU.LastFreqChangeCause != "" {
-					existing.LastFreqChangeCause = h.LPDU.HFNPDU.LastFreqChangeCause
+				// JSON: { "code": N, "descr": "..." }
+				if h.LPDU.HFNPDU.LastFreqChangeCause != nil &&
+					h.LPDU.HFNPDU.LastFreqChangeCause.Descr != "" {
+					existing.LastFreqChangeCause = h.LPDU.HFNPDU.LastFreqChangeCause.Descr
 				}
 				// Phase 3b: PDU error statistics
-				if h.LPDU.HFNPDU.PDUStats != nil && h.LPDU.HFNPDU.PDUStats.MPDU != nil {
-					m := h.LPDU.HFNPDU.PDUStats.MPDU
-					existing.MPDURx = m.Rx
-					existing.MPDUTx = m.Tx
-					existing.MPDUErr = m.Err
-					total := m.Rx + m.Tx
+				// Sum across all bitrates to get totals.
+				if h.LPDU.HFNPDU.PDUStats != nil {
+					ps := h.LPDU.HFNPDU.PDUStats
+					rx := ps.MpdusRxOk.total()
+					err := ps.MpdusRxErr.total()
+					tx := ps.MpdusTx.total()
+					existing.MPDURx = rx
+					existing.MPDUTx = tx
+					existing.MPDUErr = err
+					total := rx + err // rx_ok + rx_err = total received
 					if total > 0 {
-						existing.ErrorRate = float64(m.Err) / float64(total) * 100
+						existing.ErrorRate = float64(err) / float64(total) * 100
 					}
 				}
 				// Phase 3c: current datalink from media-adv
@@ -585,11 +637,13 @@ func (s *statsStore) ingest(line string) {
 					// Also populate RecentMessage for the Live Feed datalink column
 					rm.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Code
 				}
-				// Phase 3d: aircraft-reported time
-				if h.LPDU.HFNPDU.Time != nil && h.LPDU.HFNPDU.Time.Sec > 0 {
-					existing.AircraftTime = h.LPDU.HFNPDU.Time.Sec
-				} else if h.LPDU.HFNPDU.UTCTime != nil && h.LPDU.HFNPDU.UTCTime.Sec > 0 {
-					existing.AircraftTime = h.LPDU.HFNPDU.UTCTime.Sec
+				// Phase 3d: aircraft-reported UTC time — format as "HH:MM:SS UTC"
+				if h.LPDU.HFNPDU.Time != nil {
+					t := h.LPDU.HFNPDU.Time
+					existing.AircraftTime = fmt.Sprintf("%02d:%02d:%02d UTC", t.Hour, t.Min, t.Sec)
+				} else if h.LPDU.HFNPDU.UTCTime != nil {
+					t := h.LPDU.HFNPDU.UTCTime
+					existing.AircraftTime = fmt.Sprintf("%02d:%02d:%02d UTC", t.Hour, t.Min, t.Sec)
 				}
 				// Section 2.6.4: ADS-C altitude from arinc622.adsc.tags[].basic_report
 				if h.LPDU.HFNPDU.ACARS != nil &&
@@ -605,6 +659,15 @@ func (s *statsStore) ingest(line string) {
 								isValidPos(tag.BasicReport.Lat, tag.BasicReport.Lon) {
 								existing.Lat = tag.BasicReport.Lat
 								existing.Lon = tag.BasicReport.Lon
+							}
+						}
+						// earth_ref tag: ground track and speed
+						if tag.EarthRef != nil {
+							existing.GndSpdKts = tag.EarthRef.GndSpdKts
+							existing.VspdFtmin = tag.EarthRef.VspdFtmin
+							if tag.EarthRef.TrueTrkValid {
+								existing.TrueTrkDeg = tag.EarthRef.TrueTrkDeg
+								existing.TrueTrkValid = true
 							}
 						}
 					}
@@ -705,15 +768,17 @@ func (s *statsStore) ingest(line string) {
 				state = &NetworkGSState{GSID: gsID, Location: loc}
 				s.networkGS[gsID] = state
 			}
-			state.UTCSync = gss.GS.UTCSync
+			state.UTCSync = gss.UTCSync
 			state.SPDULastSeen = now
 			state.SPDUActive = true
-			// Rebuild active freq lists from this beacon
-			state.ActiveFreqsHz = make([]int64, 0, len(gss.Freqs))
+			// Rebuild active freq list from this beacon.
+			// f.Freq is in kHz (float64); only include entries where freq is known
+			// (f.Freq > 0 means the system table is loaded and the freq is resolved).
 			state.ActiveFreqsKHz = make([]int64, 0, len(gss.Freqs))
 			for _, f := range gss.Freqs {
-				state.ActiveFreqsHz = append(state.ActiveFreqsHz, f.Freq)
-				state.ActiveFreqsKHz = append(state.ActiveFreqsKHz, f.Freq/1000)
+				if f.Freq > 0 {
+					state.ActiveFreqsKHz = append(state.ActiveFreqsKHz, int64(f.Freq))
+				}
 			}
 		}
 	}

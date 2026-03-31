@@ -335,11 +335,25 @@ td.empty {
 
 .gs-card-header {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   padding: 8px 12px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
+}
+
+.gs-card-header__top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gs-card-header__badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 
 .gs-id {
@@ -354,9 +368,11 @@ td.empty {
   font-size: 13px;
   font-weight: 600;
   color: var(--accent);
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
 }
 
 .gs-freqs {

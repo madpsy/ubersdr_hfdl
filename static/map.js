@@ -1424,9 +1424,17 @@ function buildPopup(ac) {
   const distHtml = distKm !== null
     ? `Distance: ${fmtKm(distKm)}<br>`
     : '';
-  // Section 2.6.4: ADS-C altitude
+  // Section 2.6.4: ADS-C altitude, speed, track
   const altHtml = ac.alt_valid && ac.alt_ft
     ? `Altitude: ${Math.round(ac.alt_ft).toLocaleString()} ft<br>`
+    : '';
+  const spdHtml = ac.gnd_spd_kts
+    ? `Speed: ${Math.round(ac.gnd_spd_kts)} kts` +
+      (ac.vspd_ftmin ? ` / ${ac.vspd_ftmin > 0 ? '↑' : '↓'}${Math.abs(Math.round(ac.vspd_ftmin))} ft/min` : '') +
+      `<br>`
+    : '';
+  const trkHtml = ac.true_trk_valid && ac.true_trk_deg != null
+    ? `Track: ${ac.true_trk_deg.toFixed(1)}° (${bearingToCardinal(ac.true_trk_deg)})<br>`
     : '';
   // Section 7.4: Phase 3 fields in aircraft popup
   const dlIcon = ac.current_link
@@ -1456,6 +1464,8 @@ function buildPopup(ac) {
       ${gsName ? `Via: ${esc(gsName)}<br>` : ''}
       ${sigHtml}
       ${altHtml}
+      ${spdHtml}
+      ${trkHtml}
       ${dlHtml}
       ${lqHtml}
       ${fccHtml}

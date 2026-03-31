@@ -10,21 +10,25 @@ package main
 // ---------------------------------------------------------------------------
 
 // spduGSFreq is one frequency entry inside a gs_status element.
-// dumphfdl JSON: { "id": 3, "freq": 8927000, "timeslot": 12 }
+// dumphfdl JSON: { "id": 2, "freq": 8927.0 }
+// "id" is the slot index (0-based bitmask position).
+// "freq" is the actual frequency in kHz (float64), only present when the
+// system table is loaded by dumphfdl.  If the system table is not loaded,
+// only "id" is present and freq will be 0.
 type spduGSFreq struct {
-	ID       int   `json:"id"`
-	Freq     int64 `json:"freq"` // Hz
-	Timeslot int   `json:"timeslot"`
+	ID   int     `json:"id"`
+	Freq float64 `json:"freq"` // kHz (already in kHz, not Hz)
 }
 
 // spduGSStatus is one element of the gs_status array in an SPDU.
-// dumphfdl JSON: { "gs": { "id": 7, "utc_sync": true }, "freqs": [...] }
+// dumphfdl JSON: { "gs": { "id": 7 }, "utc_sync": true, "freqs": [...] }
+// Note: utc_sync is a sibling of "gs", NOT nested inside it.
 type spduGSStatus struct {
 	GS struct {
-		ID      int  `json:"id"`
-		UTCSync bool `json:"utc_sync"`
+		ID int `json:"id"`
 	} `json:"gs"`
-	Freqs []spduGSFreq `json:"freqs"`
+	UTCSync bool         `json:"utc_sync"`
+	Freqs   []spduGSFreq `json:"freqs"`
 }
 
 // NetworkGSState is the aggregated view of one ground station derived from
@@ -34,8 +38,7 @@ type NetworkGSState struct {
 	GSID           int     `json:"gs_id"`
 	Location       string  `json:"location"`
 	UTCSync        bool    `json:"utc_sync"`
-	ActiveFreqsHz  []int64 `json:"active_freqs_hz"`  // currently advertised active freqs (Hz)
-	ActiveFreqsKHz []int64 `json:"active_freqs_khz"` // same in kHz for convenience
+	ActiveFreqsKHz []int64 `json:"active_freqs_khz"` // advertised active freqs in kHz
 	SPDULastSeen   int64   `json:"spdu_last_seen"`   // unix seconds of last SPDU that mentioned this GS
 	SPDUActive     bool    `json:"spdu_active"`      // true if seen in last 10 minutes
 }
