@@ -11,6 +11,9 @@
 const lqHistory = {};
 const LQ_MAX_SAMPLES = 20;
 
+// ---- Filter state ----------------------------------------------------------
+let lqFilterTerm = '';
+
 // ---- Called from app.js SSE position handler to update history ------------
 
 function recordLQSample(ac) {
@@ -28,12 +31,32 @@ function renderLinkQualityTab() {
   if (!container) return;
 
   // Collect all aircraft that have PDU stats
-  const list = Object.values(typeof aircraftStore !== 'undefined' ? aircraftStore : {})
-    .filter(ac => ac.mpdu_rx || ac.mpdu_tx)
-    .sort((a, b) => (b.error_rate || 0) - (a.error_rate || 0)); // worst first
+  let list = Object.values(typeof aircraftStore !== 'undefined' ? aircraftStore : {})
+    .filter(ac => ac.mpdu_rx || ac.mpdu_tx);
 
-  if (list.length === 0) {
+  const total = list.length;
+
+  // Apply filter
+  if (lqFilterTerm) {
+    list = list.filter(ac =>
+      (ac.icao   || '').toLowerCase().includes(lqFilterTerm) ||
+      (ac.reg    || '').toLowerCase().includes(lqFilterTerm) ||
+      (ac.flight || '').toLowerCase().includes(lqFilterTerm)
+    );
+  }
+
+  list.sort((a, b) => (b.error_rate || 0) - (a.error_rate || 0)); // worst first
+
+  // Update count label
+  const countEl = document.getElementById('lq-count-label');
+  if (countEl) countEl.textContent = lqFilterTerm ? `${list.length} / ${total}` : `${total}`;
+
+  if (total === 0) {
     container.innerHTML = '<p class="empty" style="padding:20px">No link quality data yet — waiting for Performance Data messages (HFNPDU type 209)…</p>';
+    return;
+  }
+  if (list.length === 0) {
+    container.innerHTML = '<p class="empty" style="padding:20px">No aircraft match the filter…</p>';
     return;
   }
 
@@ -108,5 +131,16 @@ function buildSparkline(samples) {
 // ---- Boot ------------------------------------------------------------------
 
 function initLinkQualityTab() {
-  // Nothing to initialise — data comes from aircraftStore which is kept live by SSE.
+  const filterEl = document.getElementById('lq-filter');
+  const clearEl  = document.getElementById('lq-filter-clear');
+  if (!filterEl) return;
+  filterEl.addEventListener('input', () => {
+    lqFilterTerm = filterEl.value.trim().toLowerCase();
+    renderLinkQualityTab();
+  });
+  clearEl.addEventListener('click', () => {
+    filterEl.value = '';
+    lqFilterTerm = '';
+    renderLinkQualityTab();
+  });
 }

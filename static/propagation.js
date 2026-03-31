@@ -10,6 +10,9 @@
 // Cache of the last /propagation response.
 let _propLastData = null;
 
+// ---- Filter state ----------------------------------------------------------
+let propFilterTerm = '';
+
 // ---- Rendering -------------------------------------------------------------
 
 function renderPropagationTab(snap) {
@@ -26,6 +29,39 @@ function renderPropagationTab(snap) {
   const byGS  = snap.by_gs  || {};
   const byAC  = snap.by_aircraft || {};
 
+  // Group paths by aircraft key
+  const byACMap = {}; // acKey → { gsId → PropPath }
+  for (const p of paths) {
+    if (!byACMap[p.aircraft_key]) byACMap[p.aircraft_key] = {};
+    byACMap[p.aircraft_key][p.gs_id] = p;
+  }
+
+  // Apply filter — keep only aircraft keys that match
+  let acKeys = Object.keys(byACMap).sort();
+  const totalAC = acKeys.length;
+  if (propFilterTerm) {
+    acKeys = acKeys.filter(key => {
+      const anyPath = Object.values(byACMap[key])[0];
+      return key.toLowerCase().includes(propFilterTerm) ||
+             (anyPath.reg    || '').toLowerCase().includes(propFilterTerm) ||
+             (anyPath.flight || '').toLowerCase().includes(propFilterTerm) ||
+             (anyPath.icao   || '').toLowerCase().includes(propFilterTerm);
+    });
+  }
+
+  // Update count label
+  const countEl = document.getElementById('prop-count-label');
+  if (countEl) countEl.textContent = propFilterTerm ? `${acKeys.length} / ${totalAC}` : `${totalAC}`;
+
+  // Collect GS IDs only for the filtered aircraft
+  const visibleGSIds = new Set();
+  for (const key of acKeys) {
+    for (const gsId of Object.keys(byACMap[key])) {
+      visibleGSIds.add(parseInt(gsId, 10));
+    }
+  }
+  const allGSIds = [...visibleGSIds].sort((a, b) => a - b);
+
   // Summary
   const gsCount = Object.keys(byGS).length;
   const acCount = Object.keys(byAC).length;
@@ -37,17 +73,11 @@ function renderPropagationTab(snap) {
     <span class="prop-summary__updated">Updated: ${new Date().toUTCString().replace('GMT','UTC')}</span>
   </div>`;
 
-  // Matrix: rows = aircraft, columns = GS IDs they can hear
-  // Collect all GS IDs seen
-  const allGSIds = [...new Set(paths.map(p => p.gs_id))].sort((a, b) => a - b);
-
-  // Group paths by aircraft key
-  const byACMap = {}; // acKey → { gsId → PropPath }
-  for (const p of paths) {
-    if (!byACMap[p.aircraft_key]) byACMap[p.aircraft_key] = {};
-    byACMap[p.aircraft_key][p.gs_id] = p;
+  if (acKeys.length === 0) {
+    html += '<p class="empty" style="padding:20px">No aircraft match the filter…</p>';
+    container.innerHTML = html;
+    return;
   }
-  const acKeys = Object.keys(byACMap).sort();
 
   // Build matrix table
   html += `<div class="prop-matrix-wrap">`;
@@ -94,6 +124,23 @@ function loadPropagationTab() {
     .then(r => r.json())
     .then(snap => renderPropagationTab(snap))
     .catch(err => console.warn('propagation tab fetch error:', err));
+}
+
+// ---- Filter init -----------------------------------------------------------
+
+function initPropagationFilter() {
+  const filterEl = document.getElementById('prop-filter');
+  const clearEl  = document.getElementById('prop-filter-clear');
+  if (!filterEl) return;
+  filterEl.addEventListener('input', () => {
+    propFilterTerm = filterEl.value.trim().toLowerCase();
+    if (_propLastData) renderPropagationTab(_propLastData);
+  });
+  clearEl.addEventListener('click', () => {
+    filterEl.value = '';
+    propFilterTerm = '';
+    if (_propLastData) renderPropagationTab(_propLastData);
+  });
 }
 
 // ---- Utility ---------------------------------------------------------------

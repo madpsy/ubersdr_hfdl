@@ -2541,3 +2541,46 @@ td.empty {
   color: var(--muted);
   font-style: italic;
 }
+
+/* ==========================================================================
+   Aircraft change notification (bottom-centre of map)
+   ========================================================================== */
+
+.map-ac-notif {
+  /* Leaflet places this in bottomleft; we override position to centre it */
+  position: absolute !important;
+  bottom: 36px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  /* Appearance */
+  background: rgba(22, 27, 34, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  pointer-events: none;
+  /* Hidden by default */
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  z-index: 1000;
+}
+
+.map-ac-notif--visible {
+  opacity: 1;
+}
+
+.map-ac-notif--new     { border-color: #3fb950; }
+.map-ac-notif--update  { border-color: #58a6ff; }
+.map-ac-notif--removed { border-color: #f78166; }
+
+.map-ac-notif--new     .map-ac-notif__icon { color: #3fb950; }
+.map-ac-notif--update  .map-ac-notif__icon { color: #58a6ff; }
+.map-ac-notif--removed .map-ac-notif__icon { color: #f78166; }
+
+.map-ac-notif__icon  { font-size: 11px; font-weight: 600; }
+.map-ac-notif__label { font-family: var(--font-mono); font-size: 12px; }

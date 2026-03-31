@@ -4,12 +4,13 @@
 
 'use strict';
 
-const MAX_FEED_ROWS = 100;
+const MAX_FEED_ROWS = 200;
 const MAX_MESSAGES_ROWS = 500; // Messages tab ring buffer
 const MAX_EVENTS_ROWS = 500;   // Events tab ring buffer
 
 // ---- In-memory ring buffers for new tabs -----------------------------------
 // Each entry is the raw SSE data object for that event type.
+const feedStore     = []; // all frames — backing store for the Live Feed tab
 const messagesStore = []; // ACARS messages with msg_text
 const eventsStore   = []; // logon / logoff / gs_event / notable frames
 
@@ -230,16 +231,91 @@ function buildFeedRow(msg) {
 }
 
 function prependFeedRow(msg) {
-  const tbody = document.getElementById('feed-tbody');
+  // Keep the backing store in sync
+  feedStore.unshift(msg);
+  if (feedStore.length > MAX_FEED_ROWS) feedStore.length = MAX_FEED_ROWS;
 
+  // Only add to DOM if the row passes the current filter
+  if (!feedMatchesFilter(msg)) {
+    updateFeedCount();
+    return;
+  }
+
+  const tbody = document.getElementById('feed-tbody');
   const empty = tbody.querySelector('.empty');
   if (empty) empty.parentElement.remove();
 
   tbody.insertAdjacentHTML('afterbegin', buildFeedRow(msg));
 
+  // Trim visible rows to MAX_FEED_ROWS
   while (tbody.rows.length > MAX_FEED_ROWS) {
     tbody.deleteRow(tbody.rows.length - 1);
   }
+  updateFeedCount();
+}
+
+// ---- Live Feed filter -------------------------------------------------------
+
+const feedFilter = { reg: '', flight: '', type: '' };
+
+function feedMatchesFilter(msg) {
+  if (feedFilter.reg) {
+    const t = feedFilter.reg;
+    if (!(msg.reg || '').toLowerCase().includes(t) &&
+        !(msg.src_icao || '').toLowerCase().includes(t)) return false;
+  }
+  if (feedFilter.flight && !(msg.flight || '').toLowerCase().includes(feedFilter.flight)) return false;
+  if (feedFilter.type  && !(msg.msg_type || '').toLowerCase().includes(feedFilter.type))  return false;
+  return true;
+}
+
+function updateFeedCount() {
+  const countEl = document.getElementById('feed-count-label');
+  if (!countEl) return;
+  const visible = feedStore.filter(feedMatchesFilter).length;
+  countEl.textContent = feedFilter.reg || feedFilter.flight || feedFilter.type
+    ? `${visible} / ${feedStore.length}`
+    : `${feedStore.length}`;
+}
+
+function renderFeedTable() {
+  const tbody = document.getElementById('feed-tbody');
+  if (!tbody) return;
+  const filtered = feedStore.filter(feedMatchesFilter);
+  updateFeedCount();
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="11" class="empty">${
+      feedFilter.reg || feedFilter.flight || feedFilter.type
+        ? 'No messages match the filter…'
+        : 'Waiting for messages…'
+    }</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = filtered.map(buildFeedRow).join('');
+  tbody.querySelectorAll('.feed-new').forEach(r => r.classList.remove('feed-new'));
+}
+
+function initFeedFilter() {
+  const regEl    = document.getElementById('feed-filter-reg');
+  const flightEl = document.getElementById('feed-filter-flight');
+  const typeEl   = document.getElementById('feed-filter-type');
+  const clearEl  = document.getElementById('feed-filter-clear');
+  if (!regEl) return;
+
+  function applyFilter() {
+    feedFilter.reg    = regEl.value.trim().toLowerCase();
+    feedFilter.flight = flightEl.value.trim().toLowerCase();
+    feedFilter.type   = typeEl.value.trim().toLowerCase();
+    renderFeedTable();
+  }
+  regEl.addEventListener('input', applyFilter);
+  flightEl.addEventListener('input', applyFilter);
+  typeEl.addEventListener('input', applyFilter);
+  clearEl.addEventListener('click', () => {
+    regEl.value = flightEl.value = typeEl.value = '';
+    feedFilter.reg = feedFilter.flight = feedFilter.type = '';
+    renderFeedTable();
+  });
 }
 
 // ---- ARINC 620 free-text field decoder ------------------------------------
@@ -658,10 +734,17 @@ function initMessagesTab() {
 
 // ---- Events tab (Phase 1c) -------------------------------------------------
 
-const evtFilter = { type: '' };
+const evtFilter = { type: '', reg: '', flight: '' };
 
 function evtMatchesFilter(evt) {
   if (evtFilter.type && evt._evtType !== evtFilter.type) return false;
+  if (evtFilter.reg) {
+    const t = evtFilter.reg;
+    if (!(evt.reg || '').toLowerCase().includes(t) &&
+        !(evt.src_icao || '').toLowerCase().includes(t) &&
+        !(evt.icao || '').toLowerCase().includes(t)) return false;
+  }
+  if (evtFilter.flight && !(evt.flight || '').toLowerCase().includes(evtFilter.flight)) return false;
   return true;
 }
 
@@ -757,16 +840,29 @@ function addEventEntry(type, data) {
 }
 
 function initEventsTab() {
-  const typeEl  = document.getElementById('evt-filter-type');
-  const clearEl = document.getElementById('evt-filter-clear');
+  const typeEl   = document.getElementById('evt-filter-type');
+  const regEl    = document.getElementById('evt-filter-reg');
+  const flightEl = document.getElementById('evt-filter-flight');
+  const clearEl  = document.getElementById('evt-filter-clear');
   if (!typeEl) return;
+
   typeEl.addEventListener('change', () => {
     evtFilter.type = typeEl.value;
     renderEventsTable();
   });
+  if (regEl) regEl.addEventListener('input', () => {
+    evtFilter.reg = regEl.value.trim().toLowerCase();
+    renderEventsTable();
+  });
+  if (flightEl) flightEl.addEventListener('input', () => {
+    evtFilter.flight = flightEl.value.trim().toLowerCase();
+    renderEventsTable();
+  });
   clearEl.addEventListener('click', () => {
     typeEl.value = '';
-    evtFilter.type = '';
+    if (regEl)    regEl.value    = '';
+    if (flightEl) flightEl.value = '';
+    evtFilter.type = evtFilter.reg = evtFilter.flight = '';
     renderEventsTable();
   });
 }
@@ -872,14 +968,13 @@ function loadStats() {
       if (cachedInstancesData) renderInstances(cachedInstancesData);
 
       if (data.recent && data.recent.length > 0) {
-        // Pre-populate Live Feed
-        const tbody = document.getElementById('feed-tbody');
-        tbody.innerHTML = '';
-        const reversed = [...data.recent].reverse();
-        reversed.forEach(msg => {
-          tbody.insertAdjacentHTML('beforeend', buildFeedRow(msg));
-        });
-        tbody.querySelectorAll('.feed-new').forEach(r => r.classList.remove('feed-new'));
+        // Pre-populate Live Feed backing store (newest-first) then render
+        if (feedStore.length === 0) {
+          for (let i = data.recent.length - 1; i >= 0; i--) {
+            feedStore.push(data.recent[i]);
+          }
+          renderFeedTable();
+        }
 
         // Seed Messages and Events stores from the ring buffer on first load only.
         // Use a flag rather than a length check so that early SSE arrivals don't
@@ -1869,9 +1964,12 @@ function fetchReceiverDescription() {
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   // Initialise new tab filter controls
+  initFeedFilter();
   initMessagesTab();
   initEventsTab();
   initPlanesFilter();
+  if (typeof initLinkQualityTab   === 'function') initLinkQualityTab();
+  if (typeof initPropagationFilter === 'function') initPropagationFilter();
   // Chain instances → stats so that cachedInstancesData is set before loadStats()
   // calls renderInstances(), ensuring frequency chips are coloured correctly on
   // the first render after a page load.
@@ -1913,6 +2011,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Re-render tabs when switching to them
   document.addEventListener('tabchange', (e) => {
+    if (e.detail === 'feed')     renderFeedTable();
     if (e.detail === 'planes')   renderAircraftTable();
     if (e.detail === 'signal')   loadSignalHistory();
     if (e.detail === 'messages') renderMessagesTable();

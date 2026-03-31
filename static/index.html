@@ -68,6 +68,13 @@
 
     <!-- Live feed tab -->
     <section id="tab-feed" class="tab-panel">
+      <div class="tab-toolbar">
+        <input type="text" id="feed-filter-reg" class="filter-input" placeholder="Reg / ICAO…" />
+        <input type="text" id="feed-filter-flight" class="filter-input" placeholder="Flight…" />
+        <input type="text" id="feed-filter-type" class="filter-input" placeholder="Type…" />
+        <button id="feed-filter-clear" class="toolbar-btn">✕ Clear</button>
+        <span id="feed-count-label" class="filter-count"></span>
+      </div>
       <table id="feed-table">
         <thead>
           <tr>
@@ -128,6 +135,8 @@
           <option value="gs_event">GS Event</option>
           <option value="message">Frame</option>
         </select>
+        <input type="text" id="evt-filter-reg" class="filter-input" placeholder="Reg / ICAO…" />
+        <input type="text" id="evt-filter-flight" class="filter-input" placeholder="Flight…" />
         <button id="evt-filter-clear" class="toolbar-btn">✕ Clear</button>
         <span id="evt-count-label" class="filter-count"></span>
       </div>
@@ -178,11 +187,21 @@
 
     <!-- Link Quality tab -->
     <section id="tab-lq" class="tab-panel">
+      <div class="tab-toolbar">
+        <input type="text" id="lq-filter" class="filter-input" placeholder="ICAO / Reg / Flight…" />
+        <button id="lq-filter-clear" class="toolbar-btn">✕ Clear</button>
+        <span id="lq-count-label" class="filter-count"></span>
+      </div>
       <div id="lq-content"></div>
     </section>
 
     <!-- Propagation tab (Phase 4) -->
     <section id="tab-propagation" class="tab-panel">
+      <div class="tab-toolbar">
+        <input type="text" id="prop-filter" class="filter-input" placeholder="ICAO / Reg / Flight…" />
+        <button id="prop-filter-clear" class="toolbar-btn">✕ Clear</button>
+        <span id="prop-count-label" class="filter-count"></span>
+      </div>
       <div id="propagation-grid"></div>
     </section>
 

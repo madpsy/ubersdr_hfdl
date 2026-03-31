@@ -1637,6 +1637,13 @@ function upsertMarker(ac, fromSSE = false) {
   const popup = buildPopup(ac);
 
   const isNew = !aircraftMarkers[ac.key];
+
+  // Show bottom-centre notification for SSE-driven events only
+  if (fromSSE) {
+    const label = acLabel(ac);
+    showMapNotification(isNew ? 'new' : 'update', label);
+  }
+
   if (!isNew) {
     aircraftMarkers[ac.key]
       .setLatLng([ac.lat, ac.lon])
@@ -1802,6 +1809,11 @@ function handlePositionEvent(ac) {
 
 function handlePurgeEvent(key) {
   if (aircraftMarkers[key]) {
+    // Show removal notification before deleting the data
+    const ac = aircraftData[key];
+    const label = ac ? acLabel(ac) : key;
+    showMapNotification('removed', label);
+
     aircraftMarkers[key].remove();
     delete aircraftMarkers[key];
     delete aircraftData[key];
@@ -1811,6 +1823,54 @@ function handlePurgeEvent(key) {
     renderFreqBandControl();
     renderDistanceStats();
   }
+}
+
+// ---- Bottom-centre aircraft notification -----------------------------------
+
+let _mapNotifControl = null;
+let _mapNotifTimer   = null;
+
+/**
+ * Show a brief notification at the bottom-centre of the map.
+ * @param {string} type  'new' | 'update' | 'removed'
+ * @param {string} label Aircraft label (flight / reg / icao)
+ */
+function showMapNotification(type, label) {
+  if (!hfdlMap) return;
+
+  // Create the control once
+  if (!_mapNotifControl) {
+    _mapNotifControl = L.control({ position: 'bottomleft' });
+    _mapNotifControl.onAdd = function () {
+      const div = L.DomUtil.create('div', 'map-ac-notif');
+      L.DomEvent.disableClickPropagation(div);
+      return div;
+    };
+    _mapNotifControl.addTo(hfdlMap);
+  }
+
+  const el = _mapNotifControl.getContainer();
+  if (!el) return;
+
+  // Clear any pending hide timer
+  if (_mapNotifTimer) { clearTimeout(_mapNotifTimer); _mapNotifTimer = null; }
+
+  const icon  = type === 'new'     ? '✈ New'
+              : type === 'removed' ? '✈ Removed'
+              : '✈ Updated';
+  const cls   = type === 'new'     ? 'map-ac-notif--new'
+              : type === 'removed' ? 'map-ac-notif--removed'
+              : 'map-ac-notif--update';
+
+  el.className = `map-ac-notif ${cls} map-ac-notif--visible`;
+  el.innerHTML = `<span class="map-ac-notif__icon">${icon}</span>` +
+                 `<span class="map-ac-notif__label">${esc(label)}</span>`;
+
+  // Auto-hide after 3 s
+  _mapNotifTimer = setTimeout(() => {
+    el.classList.remove('map-ac-notif--visible');
+    _mapNotifTimer = null;
+  }, 3000);
 }
 
 // ---- Utility ---------------------------------------------------------------
