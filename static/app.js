@@ -853,6 +853,7 @@ function loadStats() {
       if (cachedInstancesData) renderInstances(cachedInstancesData);
 
       if (data.recent && data.recent.length > 0) {
+        // Pre-populate Live Feed
         const tbody = document.getElementById('feed-tbody');
         tbody.innerHTML = '';
         const reversed = [...data.recent].reverse();
@@ -860,6 +861,38 @@ function loadStats() {
           tbody.insertAdjacentHTML('beforeend', buildFeedRow(msg));
         });
         tbody.querySelectorAll('.feed-new').forEach(r => r.classList.remove('feed-new'));
+
+        // Pre-populate Messages tab from the same ring buffer
+        // (only seed if the store is empty — don't overwrite SSE-driven entries)
+        if (messagesStore.length === 0) {
+          // recent is oldest-first; we want newest-first in messagesStore
+          for (let i = data.recent.length - 1; i >= 0; i--) {
+            const msg = data.recent[i];
+            if (msg.msg_text || msg.label) {
+              messagesStore.push(msg);
+              if (messagesStore.length >= MAX_MESSAGES_ROWS) break;
+            }
+          }
+          renderMessagesTable();
+        }
+
+        // Pre-populate Events tab from the same ring buffer
+        if (eventsStore.length === 0) {
+          for (let i = data.recent.length - 1; i >= 0; i--) {
+            const msg = data.recent[i];
+            let evtType = null;
+            if (msg.msg_type === 'Logon confirm') {
+              evtType = 'logon';
+            } else if (msg.msg_type === 'Logoff request' || msg.msg_type === 'Logon denied') {
+              evtType = 'logoff';
+            }
+            if (evtType) {
+              eventsStore.push(Object.assign({ _evtType: evtType }, msg));
+              if (eventsStore.length >= MAX_EVENTS_ROWS) break;
+            }
+          }
+          renderEventsTable();
+        }
       }
     })
     .catch(err => console.warn('stats fetch error:', err));
