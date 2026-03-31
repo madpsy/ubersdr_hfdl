@@ -508,8 +508,9 @@ function renderMessagesTable() {
     if (msg.label === 'SA' && msg.msg_text) {
       // Media Advisory — decode datalink status
       decodedText = decodeMediaAdvisory(msg.msg_text);
-    } else if (msg.label === 'H1' && msg.msg_text && !msg.msg_text.startsWith('POS')) {
-      // H1 free-text — try ARINC 620 field decoder (skip POS reports which are already decoded)
+    } else if (msg.msg_text && !msg.msg_text.startsWith('POS')) {
+      // Try ARINC 620 field decoder for any label that may contain structured free-text
+      // (H1, C1, B6, Q0, etc.) — skip POS reports which are already decoded by backend
       decodedText = decodeArinc620(msg.msg_text);
     }
     const fullText  = decodedText ? esc(decodedText) : esc(displayText);
