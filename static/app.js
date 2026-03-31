@@ -786,14 +786,17 @@ function renderGroundStations(stations) {
         activeSlotsRow = `<div class="gs-active-slots"><span class="gs-active-slots__label">SPDU active:</span>${chips}</div>`;
       }
     }
-    const hasBadges = !!(heard || gs.spdu_active || gs.spdu_last_seen || heardByCount > 0);
+    // heardBadge goes on the top row (primary status).
+    // SPDU/UTC/heard-by go on the secondary badges row.
+    const hasSecondaryBadges = !!(gs.spdu_active || gs.spdu_last_seen || heardByCount > 0);
     return `<div class="gs-card${heard ? ' gs-card--heard' : ''}${gs.spdu_active ? ' gs-card--spdu' : ''}">
       <div class="gs-card-header">
         <div class="gs-card-header__top">
           <span class="gs-id">GS ${gs.gs_id}</span>
           <span class="gs-location">${esc(gs.location)}</span>
+          ${heardBadge}
         </div>
-        ${hasBadges ? `<div class="gs-card-header__badges">${heardBadge}${spduBadge}${syncBadge}${heardByBadge}</div>` : ''}
+        ${hasSecondaryBadges ? `<div class="gs-card-header__badges">${spduBadge}${syncBadge}${heardByBadge}</div>` : ''}
       </div>
       <div class="gs-freqs">${freqs || '<span class="gs-no-freqs">No frequencies</span>'}</div>
       ${activeSlotsRow}

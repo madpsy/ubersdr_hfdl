@@ -28,13 +28,15 @@ function renderNetworkTab(networkData, gsData) {
     }
   }
 
-  // Build a lookup of SPDU-advertised active freqs per GS
-  const activeByGS = {}; // gs_id → Set<freq_khz>
-  const stateByGS  = {}; // gs_id → NetworkGSState
+  // Build a lookup of SPDU-advertised active freqs/slots per GS
+  const activeKHzByGS  = {}; // gs_id → Set<freq_khz>  (only when system table loaded)
+  const activeSlotByGS = {}; // gs_id → Set<slot_id>   (always available)
+  const stateByGS      = {}; // gs_id → NetworkGSState
   if (Array.isArray(networkData)) {
     for (const n of networkData) {
       stateByGS[n.gs_id] = n;
-      activeByGS[n.gs_id] = new Set(n.active_freqs_khz || []);
+      activeKHzByGS[n.gs_id]  = new Set(n.active_freqs_khz || []);
+      activeSlotByGS[n.gs_id] = new Set(n.active_slot_ids  || []);
     }
   }
 
@@ -70,7 +72,6 @@ function renderNetworkTab(networkData, gsData) {
     const lastSeen = state?.spdu_last_seen ?? 0;
     const loc      = state?.location || (typeof gsNames !== 'undefined' && gsNames[gsId]) || `GS ${gsId}`;
     const configFreqs = _netAllFreqsByGS[gsId] || [];
-    const activeSet   = activeByGS[gsId] || new Set();
 
     // Status badges
     const activeBadge = active
@@ -85,11 +86,17 @@ function renderNetworkTab(networkData, gsData) {
       ? `<span class="net-last-seen">Last SPDU: ${typeof fmtDateTime === 'function' ? fmtDateTime(lastSeen) : new Date(lastSeen*1000).toUTCString()}</span>`
       : '';
 
-    // Frequency chips — green if advertised active in SPDU, grey otherwise
+    // Frequency chips — green if advertised active in SPDU.
+    // Primary: match by slot ID (timeslot field) — always available.
+    // Fallback: match by freq_khz — only when system table is loaded.
+    const slotSet = activeSlotByGS[gsId] || new Set();
+    const kHzSet  = activeKHzByGS[gsId]  || new Set();
     let freqChips = '';
     if (configFreqs.length > 0) {
       freqChips = configFreqs.map(f => {
-        const isActive = activeSet.has(f.freq_khz);
+        // A frequency is active if its timeslot matches a SPDU slot ID,
+        // OR if its kHz value is in the resolved active freq list.
+        const isActive = slotSet.has(f.timeslot) || kHzSet.has(f.freq_khz);
         const cls = isActive ? 'net-freq net-freq--active' : 'net-freq';
         return `<span class="${cls}">${f.freq_khz.toLocaleString()}<span class="net-slot">T${f.timeslot}</span></span>`;
       }).join('');

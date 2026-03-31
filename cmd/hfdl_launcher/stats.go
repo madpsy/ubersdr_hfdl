@@ -376,7 +376,8 @@ type groundStationResponse struct {
 	SPDUActive     bool    `json:"spdu_active"`
 	SPDULastSeen   int64   `json:"spdu_last_seen,omitempty"`
 	UTCSync        bool    `json:"utc_sync"`
-	ActiveFreqsKHz []int64 `json:"active_freqs_khz,omitempty"`
+	ActiveSlotIDs  []int   `json:"active_slot_ids,omitempty"`  // always available when SPDU seen
+	ActiveFreqsKHz []int64 `json:"active_freqs_khz,omitempty"` // only when system table loaded
 }
 
 // statsStore holds all aggregated statistics and the SSE subscriber list.
@@ -771,11 +772,13 @@ func (s *statsStore) ingest(line string) {
 			state.UTCSync = gss.UTCSync
 			state.SPDULastSeen = now
 			state.SPDUActive = true
-			// Rebuild active freq list from this beacon.
-			// f.Freq is in kHz (float64); only include entries where freq is known
-			// (f.Freq > 0 means the system table is loaded and the freq is resolved).
+			// Rebuild active slot/freq lists from this beacon.
+			// f.ID is always present (slot index, 0-based bitmask position).
+			// f.Freq is in kHz (float64), only present when system table is loaded.
+			state.ActiveSlotIDs = make([]int, 0, len(gss.Freqs))
 			state.ActiveFreqsKHz = make([]int64, 0, len(gss.Freqs))
 			for _, f := range gss.Freqs {
+				state.ActiveSlotIDs = append(state.ActiveSlotIDs, f.ID)
 				if f.Freq > 0 {
 					state.ActiveFreqsKHz = append(state.ActiveFreqsKHz, int64(f.Freq))
 				}
@@ -1068,6 +1071,7 @@ func (s *statsStore) groundStationsSnapshot() []groundStationResponse {
 			r.SPDUActive = (now - net.SPDULastSeen) < spduActiveSecs
 			r.SPDULastSeen = net.SPDULastSeen
 			r.UTCSync = net.UTCSync
+			r.ActiveSlotIDs = net.ActiveSlotIDs
 			r.ActiveFreqsKHz = net.ActiveFreqsKHz
 		}
 		result[i] = r

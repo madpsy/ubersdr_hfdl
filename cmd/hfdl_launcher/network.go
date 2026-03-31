@@ -38,7 +38,8 @@ type NetworkGSState struct {
 	GSID           int     `json:"gs_id"`
 	Location       string  `json:"location"`
 	UTCSync        bool    `json:"utc_sync"`
-	ActiveFreqsKHz []int64 `json:"active_freqs_khz"` // advertised active freqs in kHz
+	ActiveSlotIDs  []int   `json:"active_slot_ids"`  // SPDU slot indices (always available)
+	ActiveFreqsKHz []int64 `json:"active_freqs_khz"` // resolved kHz values (only when system table loaded)
 	SPDULastSeen   int64   `json:"spdu_last_seen"`   // unix seconds of last SPDU that mentioned this GS
 	SPDUActive     bool    `json:"spdu_active"`      // true if seen in last 10 minutes
 }
