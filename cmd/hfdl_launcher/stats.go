@@ -5,10 +5,103 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// parseArinc620Pos attempts to parse an ARINC 620 free-text position report
+// from an H1/M1 (or similar) ACARS msg_text.
+//
+// Format: POS<lat><lon>,<wpt>,<HHMMSS>,<FL>,<next_wpt>,<eta>,<wpt2>,<temp>,<wind_dir><wind_spd>,<fuel><checksum>
+// Example: POSN24331E039424,PMA,170413,340,PEGUR,171213,SIGRO,M41,291099,1901F4B
+//
+// Returns lat, lon, altFt, windDir, windSpd, ok.
+// altFt is flight level × 100 (feet).
+func parseArinc620Pos(msgText string) (lat, lon, altFt, windDir, windSpd float64, ok bool) {
+	// Must start with POS
+	if !strings.HasPrefix(msgText, "POS") {
+		return
+	}
+	rest := msgText[3:]
+
+	// Parse lat: N/S + 5 digits (DDMMM where MMM = tenths of minutes)
+	// e.g. N24331 = 24°33.1'N
+	if len(rest) < 6 {
+		return
+	}
+	latSign := 1.0
+	if rest[0] == 'S' {
+		latSign = -1.0
+	} else if rest[0] != 'N' {
+		return
+	}
+	latStr := rest[1:6]
+	latDeg, err1 := strconv.ParseFloat(latStr[:2], 64)
+	latMin, err2 := strconv.ParseFloat(latStr[2:], 64)
+	if err1 != nil || err2 != nil {
+		return
+	}
+	lat = latSign * (latDeg + latMin/10.0/60.0)
+	rest = rest[6:]
+
+	// Parse lon: E/W + 6 digits (DDDMMM)
+	if len(rest) < 7 {
+		return
+	}
+	lonSign := 1.0
+	if rest[0] == 'W' {
+		lonSign = -1.0
+	} else if rest[0] != 'E' {
+		return
+	}
+	lonStr := rest[1:7]
+	lonDeg, err3 := strconv.ParseFloat(lonStr[:3], 64)
+	lonMin, err4 := strconv.ParseFloat(lonStr[3:], 64)
+	if err3 != nil || err4 != nil {
+		return
+	}
+	lon = lonSign * (lonDeg + lonMin/10.0/60.0)
+	rest = rest[7:]
+
+	// Remaining fields are comma-separated
+	// ,<wpt>,<HHMMSS>,<FL>,<next_wpt>,<eta>,<wpt2>,<temp>,<wind_dir><wind_spd>,<fuel+checksum>
+	if !strings.HasPrefix(rest, ",") {
+		return
+	}
+	parts := strings.SplitN(rest[1:], ",", 9)
+	if len(parts) < 4 {
+		return
+	}
+	// parts[0] = waypoint, parts[1] = time, parts[2] = FL, parts[3] = next_wpt ...
+	flStr := parts[2]
+	fl, err5 := strconv.ParseFloat(flStr, 64)
+	if err5 == nil && fl > 0 {
+		altFt = fl * 100 // FL340 → 34000 ft
+	}
+
+	// Wind is at parts[7] if available: e.g. "291099" = 291° at 099 kts
+	if len(parts) >= 8 {
+		windField := parts[7]
+		// Remove leading sign for temperature (parts[6] = temp like "M41")
+		// Wind field: 6 chars = 3 dir + 3 spd
+		if len(windField) == 6 {
+			wd, e1 := strconv.ParseFloat(windField[:3], 64)
+			ws, e2 := strconv.ParseFloat(windField[3:], 64)
+			if e1 == nil && e2 == nil {
+				windDir = wd
+				windSpd = ws
+			}
+		}
+	}
+
+	if !isValidPos(lat, lon) {
+		return
+	}
+	ok = true
+	return
+}
 
 // bearingDeg computes the initial bearing (degrees, 0=N, clockwise) from
 // point (lat1,lon1) to point (lat2,lon2) using the forward azimuth formula.
@@ -301,6 +394,9 @@ type AircraftState struct {
 	VspdFtmin    float64 `json:"vspd_ftmin,omitempty"`   // ft/min (positive = climbing)
 	TrueTrkDeg   float64 `json:"true_trk_deg,omitempty"` // degrees true
 	TrueTrkValid bool    `json:"true_trk_valid,omitempty"`
+	// ARINC 620 position report: wind
+	WindDirDeg float64 `json:"wind_dir_deg,omitempty"` // degrees true
+	WindSpdKts float64 `json:"wind_spd_kts,omitempty"` // knots
 }
 
 // RecentMessage is a trimmed record for the live feed.
@@ -549,6 +645,60 @@ func (s *statsStore) ingest(line string) {
 				rm.Label = h.LPDU.HFNPDU.ACARS.Label
 				rm.Sublabel = h.LPDU.HFNPDU.ACARS.Sublabel
 				rm.MsgText = h.LPDU.HFNPDU.ACARS.MsgText
+				// ARINC 620 position report parser — H1 messages starting with POS
+				// Updates AircraftState with lat/lon/alt/wind from free-text position reports.
+				if h.LPDU.HFNPDU.ACARS.Label == "H1" &&
+					strings.HasPrefix(h.LPDU.HFNPDU.ACARS.MsgText, "POS") {
+					if parsedLat, parsedLon, parsedAlt, parsedWDir, parsedWSpd, posOk :=
+						parseArinc620Pos(h.LPDU.HFNPDU.ACARS.MsgText); posOk {
+						// Determine acKey for this aircraft
+						posAcKey := icao
+						if posAcKey == "" {
+							posAcKey = strings.TrimPrefix(h.LPDU.HFNPDU.ACARS.Reg, ".")
+						}
+						if posAcKey == "" {
+							posAcKey = strings.TrimPrefix(h.LPDU.HFNPDU.ACARS.Flight, ".")
+						}
+						if posAcKey != "" {
+							ac := s.aircraft[posAcKey]
+							if ac == nil {
+								ac = &AircraftState{Key: posAcKey}
+								s.aircraft[posAcKey] = ac
+							}
+							// Only update position if HFNPDU pos is absent
+							if !isValidPos(ac.Lat, ac.Lon) || ac.LastSeen < now-300 {
+								ac.Lat = parsedLat
+								ac.Lon = parsedLon
+								ac.LastSeen = now
+								ac.FreqKHz = freqKHz
+								if h.LPDU.Dst.Type == "Ground station" {
+									ac.GSID = h.LPDU.Dst.ID
+								} else if h.LPDU.Src.Type == "Ground station" {
+									ac.GSID = h.LPDU.Src.ID
+								}
+								ac.Track = append(ac.Track, TrackPoint{Lat: parsedLat, Lon: parsedLon, Time: now})
+								if len(ac.Track) > maxTrackPoints {
+									ac.Track = ac.Track[len(ac.Track)-maxTrackPoints:]
+								}
+								if n := len(ac.Track); n >= 2 {
+									prev := ac.Track[n-2]
+									ac.Bearing = bearingDeg(prev.Lat, prev.Lon, parsedLat, parsedLon)
+								}
+								if posUpdate == nil {
+									posUpdate = ac
+								}
+							}
+							if parsedAlt > 0 {
+								ac.AltFt = parsedAlt
+								ac.AltValid = true
+							}
+							if parsedWSpd > 0 {
+								ac.WindDirDeg = parsedWDir
+								ac.WindSpdKts = parsedWSpd
+							}
+						}
+					}
+				}
 				// Weather: store H1/WX messages in the weather ring buffer
 				if h.LPDU.HFNPDU.ACARS.Label == "H1" &&
 					h.LPDU.HFNPDU.ACARS.Sublabel == "WX" &&

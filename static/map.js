@@ -647,10 +647,10 @@ function makeGSIcon(gs) {
   const heard  = gs.last_heard && gs.last_heard > 0;
   const colour = gsColorFor(gs.gs_id);
   // Phase 2d: three opacity levels
-  //   1.0 — SPDU-active (network is advertising this GS right now)
-  //   0.7 — heard by receiver but not SPDU-active
+  //   1.0 — actually heard by this receiver (received a message from it as source)
+  //   0.7 — SPDU-active (network advertises it) but never heard directly
   //   0.25 — neither heard nor SPDU-active
-  const opacity = gs.spdu_active ? 1.0 : heard ? 0.7 : 0.25;
+  const opacity = heard ? 1.0 : gs.spdu_active ? 0.7 : 0.25;
   return L.divIcon({
     className: '',
     html: `<div class="gs-marker" style="color:${colour};opacity:${opacity}" title="${esc(gs.location)}">` +
@@ -1433,6 +1433,9 @@ function buildPopup(ac) {
       (ac.vspd_ftmin ? ` / ${ac.vspd_ftmin > 0 ? '↑' : '↓'}${Math.abs(Math.round(ac.vspd_ftmin))} ft/min` : '') +
       `<br>`
     : '';
+  const windHtml = ac.wind_spd_kts
+    ? `Wind: ${Math.round(ac.wind_dir_deg)}° / ${Math.round(ac.wind_spd_kts)} kts<br>`
+    : '';
   const trkHtml = ac.true_trk_valid && ac.true_trk_deg != null
     ? `Track: ${ac.true_trk_deg.toFixed(1)}° (${bearingToCardinal(ac.true_trk_deg)})<br>`
     : '';
@@ -1466,6 +1469,7 @@ function buildPopup(ac) {
       ${altHtml}
       ${spdHtml}
       ${trkHtml}
+      ${windHtml}
       ${dlHtml}
       ${lqHtml}
       ${fccHtml}
