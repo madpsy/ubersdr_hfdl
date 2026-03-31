@@ -745,7 +745,12 @@ function makeGSIcon(gs) {
 // Build the GS popup HTML — shared between initial creation and mouseover rebuild.
 function buildGSPopup(gs, distKm) {
   const lastHeardStr = gs.last_heard
-    ? new Date(gs.last_heard * 1000).toUTCString().replace('GMT', 'UTC')
+    ? (() => {
+        const d   = new Date(gs.last_heard * 1000);
+        const time = d.toUTCString().replace(/.*(\d{2}:\d{2}:\d{2}).*/, '$1') + ' UTC';
+        const ago  = timeAgo(gs.last_heard);
+        return `${time} (${ago})`;
+      })()
     : 'Never';
   const freqLine = gs.heard_freqs_khz && gs.heard_freqs_khz.length
     ? `<br>Heard on: ${gs.heard_freqs_khz.map(f => (f / 1000).toFixed(3) + ' MHz').join(', ')}`

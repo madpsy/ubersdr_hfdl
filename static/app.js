@@ -13,6 +13,10 @@ const MAX_EVENTS_ROWS = 500;   // Events tab ring buffer
 const messagesStore = []; // ACARS messages with msg_text
 const eventsStore   = []; // logon / logoff / gs_event / notable frames
 
+// Flag: true after the first /stats response has seeded the stores from
+// data.recent so that subsequent periodic refreshes don't re-seed.
+let _storesSeeded = false;
+
 // ---- Aircraft store (kept in sync via SSE) ----------------------------------
 // Keys are aircraft key strings, values are AircraftState objects from /aircraft.
 const aircraftStore = {};
@@ -862,10 +866,14 @@ function loadStats() {
         });
         tbody.querySelectorAll('.feed-new').forEach(r => r.classList.remove('feed-new'));
 
-        // Pre-populate Messages tab from the same ring buffer
-        // (only seed if the store is empty — don't overwrite SSE-driven entries)
-        if (messagesStore.length === 0) {
-          // recent is oldest-first; we want newest-first in messagesStore
+        // Seed Messages and Events stores from the ring buffer on first load only.
+        // Use a flag rather than a length check so that early SSE arrivals don't
+        // prevent seeding (SSE fires before /stats resolves on a fast connection).
+        if (!_storesSeeded) {
+          _storesSeeded = true;
+
+          // Messages tab — seed with ACARS frames (newest-first)
+          // data.recent is oldest-first, so iterate in reverse
           for (let i = data.recent.length - 1; i >= 0; i--) {
             const msg = data.recent[i];
             if (msg.msg_text || msg.label) {
@@ -874,10 +882,8 @@ function loadStats() {
             }
           }
           renderMessagesTable();
-        }
 
-        // Pre-populate Events tab from the same ring buffer
-        if (eventsStore.length === 0) {
+          // Events tab — seed with logon/logoff entries from data.recent (newest-first)
           for (let i = data.recent.length - 1; i >= 0; i--) {
             const msg = data.recent[i];
             let evtType = null;
@@ -890,6 +896,15 @@ function loadStats() {
               eventsStore.push(Object.assign({ _evtType: evtType }, msg));
               if (eventsStore.length >= MAX_EVENTS_ROWS) break;
             }
+          }
+          // Also seed gs_event entries from the dedicated ring buffer (newest-first)
+          if (data.recent_events && data.recent_events.length > 0) {
+            for (let i = data.recent_events.length - 1; i >= 0; i--) {
+              eventsStore.push(Object.assign({ _evtType: 'gs_event' }, data.recent_events[i]));
+              if (eventsStore.length >= MAX_EVENTS_ROWS) break;
+            }
+            // Re-sort by time descending so logon/logoff and gs_events are interleaved correctly
+            eventsStore.sort((a, b) => (b.time || 0) - (a.time || 0));
           }
           renderEventsTable();
         }

@@ -162,6 +162,7 @@ func bearingDeg(lat1, lon1, lat2, lon2 float64) float64 {
 }
 
 const maxRecentMessages = 200
+const maxRecentEvents = 200
 
 // ---------------------------------------------------------------------------
 // JSON message types (subset of dumphfdl's decoded:json output)
@@ -489,6 +490,7 @@ type StatsSnapshot struct {
 	UptimeSecs      int64           `json:"uptime_secs"`
 	Frequencies     []*FreqStats    `json:"frequencies"`
 	Recent          []RecentMessage `json:"recent"`
+	RecentEvents    []gsEvent       `json:"recent_events"`              // ring buffer of gs_event entries
 	GroundStations  map[int]string  `json:"ground_stations"`            // gs_id → location name
 	DumphfdlVer     string          `json:"dumphfdl_ver,omitempty"`     // Phase 1d
 	SystableVersion int             `json:"systable_version,omitempty"` // Section 2.7
@@ -547,6 +549,8 @@ type statsStore struct {
 	// Phase 4a: propagation paths from freq_data[]
 	// key: "acKey:gsID" → PropPath
 	propagation map[string]*PropPath
+	// recentEvents: ring buffer of gs_event entries for page-load seeding
+	recentEvents []gsEvent
 	// Weather: ring buffer of label H1 / sublabel WX messages
 	weatherMessages []WeatherMessage
 	// Phase 1d: dumphfdl version string (set on first message received)
@@ -1106,6 +1110,14 @@ func (s *statsStore) ingest(line string) {
 
 	// Phase 1c: broadcast gs_event if a ground station state change was detected
 	if gsEvt != nil {
+		// Also store in the recentEvents ring buffer so page-load can seed the Events tab
+		s.mu.Lock()
+		s.recentEvents = append(s.recentEvents, *gsEvt)
+		if len(s.recentEvents) > maxRecentEvents {
+			s.recentEvents = s.recentEvents[len(s.recentEvents)-maxRecentEvents:]
+		}
+		s.mu.Unlock()
+
 		if ev, err := json.Marshal(sseEvent{Type: "gs_event", Data: gsEvt}); err == nil {
 			s.broadcast(string(ev))
 		}
@@ -1189,12 +1201,16 @@ func (s *statsStore) snapshot() StatsSnapshot {
 	recent := make([]RecentMessage, len(s.recent))
 	copy(recent, s.recent)
 
+	recentEvts := make([]gsEvent, len(s.recentEvents))
+	copy(recentEvts, s.recentEvents)
+
 	return StatsSnapshot{
 		TotalMessages:   s.total,
 		StartTime:       s.startTime.Unix(),
 		UptimeSecs:      int64(time.Since(s.startTime).Seconds()),
 		Frequencies:     freqs,
 		Recent:          recent,
+		RecentEvents:    recentEvts,
 		GroundStations:  s.gsNames,
 		DumphfdlVer:     s.dumphfdlVer,
 		SystableVersion: s.systableVersion,
