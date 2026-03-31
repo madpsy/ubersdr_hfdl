@@ -2547,11 +2547,11 @@ td.empty {
    ========================================================================== */
 
 .map-ac-notif {
-  /* Leaflet places this in bottomleft; we override position to centre it */
-  position: absolute !important;
-  bottom: 36px !important;
-  left: 50% !important;
-  transform: translateX(-50%) !important;
+  /* Direct child of the map container (position:relative), so centering works */
+  position: absolute;
+  bottom: 36px;
+  left: 50%;
+  transform: translateX(-50%);
   /* Appearance */
   background: rgba(22, 27, 34, 0.92);
   border: 1px solid var(--border);
