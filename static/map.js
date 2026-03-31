@@ -720,7 +720,8 @@ const gsHeardSet = new Set();
 // ---- Map init --------------------------------------------------------------
 
 // ---- Ground station markers ------------------------------------------------
-const gsMarkers = {}; // gs_id → L.marker
+const gsMarkers  = {}; // gs_id → L.marker
+const gsDataMap  = {}; // gs_id → latest gs data object (kept in sync by loadGSMarkers)
 
 function makeGSIcon(gs) {
   const heard  = gs.last_heard && gs.last_heard > 0;
@@ -796,8 +797,12 @@ function loadGSMarkers() {
       if (!Array.isArray(list)) return;
       for (const gs of list) {
         if (!gs.lat || !gs.lon) continue;
+
+        // Always keep the live data map up to date so mouseover uses fresh values
+        gsDataMap[gs.gs_id] = gs;
+
         const icon  = makeGSIcon(gs);
-        const popup = buildGSPopup(gs, null);
+        const popup = buildGSPopup(gs, distanceToReceiverKm(gs.lat, gs.lon));
         if (gsMarkers[gs.gs_id]) {
           gsMarkers[gs.gs_id].setIcon(icon).setPopupContent(popup);
         } else {
@@ -807,12 +812,13 @@ function loadGSMarkers() {
           gsMarkers[gs.gs_id] = m;
 
           m.on('mouseover', () => {
-            // Rebuild popup with live distance (receiverLatLng may have arrived
-            // after the marker was first created).
-            const distKm = distanceToReceiverKm(gs.lat, gs.lon);
-            m.setPopupContent(buildGSPopup(gs, distKm));
+            // Use gsDataMap so we always get the latest data (last_heard, etc.)
+            // rather than the stale closure-captured gs from the initial fetch.
+            const live   = gsDataMap[gs.gs_id] || gs;
+            const distKm = distanceToReceiverKm(live.lat, live.lon);
+            m.setPopupContent(buildGSPopup(live, distKm));
             m.openPopup();
-            showRxLine(gs.lat, gs.lon);
+            showRxLine(live.lat, live.lon);
           });
           m.on('mouseout', () => {
             m.closePopup();
