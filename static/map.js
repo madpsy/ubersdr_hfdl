@@ -1006,9 +1006,9 @@ function updatePropagationLayer() {
         );
         const line = L.polyline(pts, {
           color: '#58a6ff',
-          weight: 1,
-          opacity: 0.25,
-          dashArray: '4 6',
+          weight: 2,
+          opacity: 0.55,
+          dashArray: '6 5',
           interactive: false,
         });
         const label = [p.reg, p.flight, p.icao ? `(${p.icao})` : ''].filter(Boolean).join(' ') || p.aircraft_key;
