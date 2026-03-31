@@ -968,24 +968,34 @@ function togglePlanes(visible) {
 let propagationLayerGroup = null;
 let showPropagationLayer  = false;
 
+// Map of "aircraftKey|gsId" → L.polyline, so we can update lines in-place
+// without clearing the whole layer (which causes a visible flash).
+const _propLines = {};
+
 function updatePropagationLayer() {
   if (!hfdlMap) return;
   if (!propagationLayerGroup) {
     propagationLayerGroup = L.layerGroup();
   }
-  propagationLayerGroup.clearLayers();
   // Ensure the group is on the map when visible
   if (showPropagationLayer && !hfdlMap.hasLayer(propagationLayerGroup)) {
     propagationLayerGroup.addTo(hfdlMap);
   }
-  if (!showPropagationLayer) return;
+  if (!showPropagationLayer) {
+    // Clear everything when hidden
+    propagationLayerGroup.clearLayers();
+    for (const k of Object.keys(_propLines)) delete _propLines[k];
+    return;
+  }
 
   fetch('/propagation')
     .then(r => r.json())
     .then(snap => {
       if (!snap || !snap.paths) return;
       if (!propagationLayerGroup) return;
-      propagationLayerGroup.clearLayers();
+
+      // Build the set of path keys that should be visible after this update
+      const wantedKeys = new Set();
 
       for (const p of snap.paths) {
         // Filter: if an aircraft or GS is selected, only show paths relevant to it
@@ -1002,25 +1012,44 @@ function updatePropagationLayer() {
         if (!acMarker) continue;
         const acLatLng = acMarker.getLatLng();
 
-        // Draw a faint great-circle line
+        const pathKey = `${p.aircraft_key}|${p.gs_id}`;
+        wantedKeys.add(pathKey);
+
+        // Compute great-circle points
         const pts = greatCirclePoints(
           gsLatLng.lat, gsLatLng.lng,
           acLatLng.lat, acLatLng.lng,
           32
         );
-        const line = L.polyline(pts, {
-          color: '#f0a500',  // amber — visible over both sea and land
-          weight: 2,
-          opacity: 0.7,
-          dashArray: '8 5',
-          interactive: false,
-        });
+
         const label = [p.reg, p.flight, p.icao ? `(${p.icao})` : ''].filter(Boolean).join(' ') || p.aircraft_key;
-        line.bindTooltip(
-          `${esc(p.gs_location)} → ${esc(label)}<br>${p.freq_khz ? (p.freq_khz/1000).toFixed(3)+' MHz' : ''} ${p.sig_level ? p.sig_level.toFixed(1)+' dBFS' : ''}`,
-          { sticky: true, className: 'prop-line-tooltip' }
-        );
-        propagationLayerGroup.addLayer(line);
+        const tooltipContent = `${esc(p.gs_location)} → ${esc(label)}<br>${p.freq_khz ? (p.freq_khz/1000).toFixed(3)+' MHz' : ''} ${p.sig_level ? p.sig_level.toFixed(1)+' dBFS' : ''}`;
+
+        if (_propLines[pathKey]) {
+          // Update existing line in-place — no flash
+          _propLines[pathKey].setLatLngs(pts);
+          _propLines[pathKey].setTooltipContent(tooltipContent);
+        } else {
+          // Create a new line
+          const line = L.polyline(pts, {
+            color: '#f0a500',  // amber — visible over both sea and land
+            weight: 1,
+            opacity: 0.6,
+            dashArray: '8 5',
+            interactive: false,
+          });
+          line.bindTooltip(tooltipContent, { sticky: true, className: 'prop-line-tooltip' });
+          propagationLayerGroup.addLayer(line);
+          _propLines[pathKey] = line;
+        }
+      }
+
+      // Remove lines that are no longer in the wanted set
+      for (const [k, line] of Object.entries(_propLines)) {
+        if (!wantedKeys.has(k)) {
+          propagationLayerGroup.removeLayer(line);
+          delete _propLines[k];
+        }
       }
     })
     .catch(() => {});
