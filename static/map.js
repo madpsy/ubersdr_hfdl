@@ -1156,7 +1156,10 @@ const RAD = 180 / Math.PI;
 
 /**
  * Interpolate N+1 points along the great-circle arc between two lat/lon pairs.
- * Returns an array of [lat, lon] suitable for L.polyline.
+ * Returns an array of segments (each segment is an array of [lat, lon] pairs)
+ * split at antimeridian crossings, suitable for L.polyline (which accepts
+ * nested arrays).  Splitting prevents Leaflet from drawing a line across the
+ * entire map when the arc crosses ±180° longitude.
  */
 function greatCirclePoints(lat1, lon1, lat2, lon2, steps) {
   const φ1 = lat1 * DEG, λ1 = lon1 * DEG;
@@ -1168,9 +1171,9 @@ function greatCirclePoints(lat1, lon1, lat2, lon2, steps) {
              Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
   const d  = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); // central angle
 
-  if (d < 1e-10) return [[lat1, lon1]]; // same point
+  if (d < 1e-10) return [[[lat1, lon1]]]; // same point — one segment
 
-  const pts = [];
+  const flat = [];
   for (let i = 0; i <= steps; i++) {
     const f  = i / steps;
     const A  = Math.sin((1 - f) * d) / Math.sin(d);
@@ -1180,9 +1183,21 @@ function greatCirclePoints(lat1, lon1, lat2, lon2, steps) {
     const z  = A * Math.sin(φ1)                 + B * Math.sin(φ2);
     const φi = Math.atan2(z, Math.sqrt(x * x + y * y));
     const λi = Math.atan2(y, x);
-    pts.push([φi * RAD, λi * RAD]);
+    flat.push([φi * RAD, λi * RAD]);
   }
-  return pts;
+
+  // Split into segments at antimeridian crossings (longitude jump > 180°)
+  const segments = [];
+  let seg = [flat[0]];
+  for (let i = 1; i < flat.length; i++) {
+    if (Math.abs(flat[i][1] - flat[i - 1][1]) > 180) {
+      segments.push(seg);
+      seg = [];
+    }
+    seg.push(flat[i]);
+  }
+  segments.push(seg);
+  return segments;
 }
 
 /** Draw a dashed great-circle line from the receiver to [lat, lon]. */
