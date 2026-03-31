@@ -787,11 +787,45 @@ function errRateClass(pct) {
   return 'err-low';
 }
 
+// Planes tab filter state
+let planesFilterTerm = '';
+
+function initPlanesFilter() {
+  const filterEl = document.getElementById('planes-filter');
+  const clearEl  = document.getElementById('planes-filter-clear');
+  if (!filterEl) return;
+  filterEl.addEventListener('input', () => {
+    planesFilterTerm = filterEl.value.trim().toLowerCase();
+    renderAircraftTable();
+  });
+  clearEl.addEventListener('click', () => {
+    filterEl.value = '';
+    planesFilterTerm = '';
+    renderAircraftTable();
+  });
+}
+
 function renderAircraftTable() {
   const tbody = document.getElementById('planes-tbody');
-  const list = Object.values(aircraftStore);
+  let list = Object.values(aircraftStore);
+
+  // Apply filter
+  if (planesFilterTerm) {
+    list = list.filter(ac =>
+      (ac.icao   || '').toLowerCase().includes(planesFilterTerm) ||
+      (ac.reg    || '').toLowerCase().includes(planesFilterTerm) ||
+      (ac.flight || '').toLowerCase().includes(planesFilterTerm)
+    );
+  }
+
+  const countEl = document.getElementById('planes-count-label');
+  if (countEl) {
+    const total = Object.keys(aircraftStore).length;
+    countEl.textContent = planesFilterTerm ? `${list.length} / ${total}` : `${total}`;
+  }
+
   if (list.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="13" class="empty">No aircraft seen yet…</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="13" class="empty">${planesFilterTerm ? 'No aircraft match the filter…' : 'No aircraft seen yet…'}</td></tr>`;
     return;
   }
 
@@ -1558,6 +1592,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialise new tab filter controls
   initMessagesTab();
   initEventsTab();
+  initPlanesFilter();
   // Chain instances → stats so that cachedInstancesData is set before loadStats()
   // calls renderInstances(), ensuring frequency chips are coloured correctly on
   // the first render after a page load.

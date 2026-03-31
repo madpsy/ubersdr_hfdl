@@ -45,6 +45,10 @@
     <!-- Map tab -->
     <section id="tab-map" class="tab-panel active">
       <div id="map"></div>
+      <div id="map-search-bar">
+        <input type="text" id="map-search" class="map-search-input" placeholder="🔍 ICAO / Reg / Flight…" autocomplete="off" />
+        <button id="map-search-clear" class="map-search-clear" title="Clear search">✕</button>
+      </div>
     </section>
 
     <!-- Frequency stats tab -->
@@ -183,6 +187,11 @@
 
     <!-- Planes tab -->
     <section id="tab-planes" class="tab-panel">
+      <div class="tab-toolbar">
+        <input type="text" id="planes-filter" class="filter-input" placeholder="ICAO / Reg / Flight…" style="width:200px" />
+        <button id="planes-filter-clear" class="toolbar-btn">✕ Clear</button>
+        <span id="planes-count-label" class="filter-count"></span>
+      </div>
       <table id="planes-table">
         <thead>
           <tr>

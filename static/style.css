@@ -2079,6 +2079,52 @@ td.empty {
 .err-mid  { color: var(--yellow); }
 .err-high { color: var(--red); }
 
+/* ---- Map search bar overlay ---- */
+
+#map-search-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  pointer-events: all;
+}
+
+.map-search-input {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  width: 200px;
+  outline: none;
+}
+
+.map-search-input::placeholder {
+  color: var(--muted);
+}
+
+.map-search-clear {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.map-search-clear:hover {
+  color: var(--text);
+}
+
 /* ---- Live Feed — row colour coding by LPDU type (Section 7.1) ---- */
 
 .feed-row--logon  { background: rgba(63, 185, 80, 0.07); }

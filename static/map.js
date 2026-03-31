@@ -248,6 +248,82 @@ function renderLegend() {
 
 // ---- Icon builder ----------------------------------------------------------
 
+// ---- Map search ------------------------------------------------------------
+let mapSearchTerm = ''; // current search term (lowercase)
+
+function acMatchesMapSearch(ac) {
+  if (!mapSearchTerm) return true;
+  return (ac.icao   || '').toLowerCase().includes(mapSearchTerm) ||
+         (ac.reg    || '').toLowerCase().includes(mapSearchTerm) ||
+         (ac.flight || '').toLowerCase().includes(mapSearchTerm);
+}
+
+function acExactMatchesMapSearch(ac) {
+  if (!mapSearchTerm) return false;
+  const t = mapSearchTerm;
+  return (ac.icao   || '').toLowerCase() === t ||
+         (ac.reg    || '').toLowerCase() === t ||
+         (ac.flight || '').toLowerCase() === t;
+}
+
+function applyMapSearch() {
+  if (!mapSearchTerm) {
+    // Clear search — restore normal state (deselect if search was driving selection)
+    for (const [k, marker] of Object.entries(aircraftMarkers)) {
+      const ac = aircraftData[k];
+      if (ac) marker.setIcon(makePlaneIcon(ac, k === selectedKey));
+    }
+    return;
+  }
+
+  // Find exact match first
+  let exactKey = null;
+  for (const [k, ac] of Object.entries(aircraftData)) {
+    if (acExactMatchesMapSearch(ac)) { exactKey = k; break; }
+  }
+
+  // Redraw all markers — dim non-matching ones
+  for (const [k, marker] of Object.entries(aircraftMarkers)) {
+    const ac = aircraftData[k];
+    if (ac) marker.setIcon(makePlaneIcon(ac, k === selectedKey));
+  }
+
+  // If exact match found, select it (shows popup, draws track)
+  if (exactKey) {
+    selectAircraft(exactKey);
+    const m = aircraftMarkers[exactKey];
+    if (m && hfdlMap) {
+      hfdlMap.panTo(m.getLatLng());
+      m.openPopup();
+    }
+  }
+}
+
+function initMapSearch() {
+  const input = document.getElementById('map-search');
+  const clear = document.getElementById('map-search-clear');
+  if (!input) return;
+
+  input.addEventListener('input', () => {
+    mapSearchTerm = input.value.trim().toLowerCase();
+    applyMapSearch();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      input.value = '';
+      mapSearchTerm = '';
+      applyMapSearch();
+      deselectAircraft();
+    }
+  });
+  clear.addEventListener('click', () => {
+    input.value = '';
+    mapSearchTerm = '';
+    applyMapSearch();
+    deselectAircraft();
+  });
+}
+
 function makePlaneIcon(ac, selected) {
   const labelText = ac.flight || ac.reg || ac.icao || ac.key || '';
   const labelHtml = labelText
@@ -255,10 +331,13 @@ function makePlaneIcon(ac, selected) {
     : '';
   const bearing = ac.bearing || 0;
   const colour  = gsColorFor(ac.gs_id);
-  // Dim if an aircraft is selected and this isn't it,
-  // OR a GS is selected and this aircraft isn't associated with it.
+  // Dim if:
+  // - an aircraft is selected and this isn't it
+  // - a GS is selected and this aircraft isn't associated with it
+  // - a map search is active and this aircraft doesn't match
   const isDimmed = (selectedKey && !selected) ||
-                   (selectedGS !== null && ac.gs_id !== selectedGS);
+                   (selectedGS !== null && ac.gs_id !== selectedGS) ||
+                   (mapSearchTerm && !acMatchesMapSearch(ac));
   const dimmed  = isDimmed ? ' ac-marker--dim' : '';
   const selCls  = selected ? ' ac-marker--selected' : '';
   return L.divIcon({
@@ -1364,6 +1443,7 @@ function initMap() {
   updateGreyline();
   setInterval(updateGreyline, 60_000);
   initLayerControl();
+  initMapSearch();
 
   // Live-activity overlay — topleft, below the recent-positions history panel.
   // Created here so Leaflet inserts it after historyControl (which is added
