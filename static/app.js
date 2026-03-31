@@ -237,6 +237,128 @@ function prependFeedRow(msg) {
   }
 }
 
+// ---- ACARS sublabel lookup (H1 sublabels decoded by libacars) --------------
+// Only official/standardised sublabels are listed here.
+// Airline-specific ones (M1, M2, etc.) are shown as raw codes.
+
+const ACARS_SUBLABELS = {
+  'DF': 'DFDR Data',
+  'MD': 'Met Dispatch',
+  'WX': 'Weather Report',
+  'PO': 'Position Report',
+  'PR': 'Position Report',
+  'FI': 'Flight Info',
+  'CF': 'Company Flight Plan',
+  'EC': 'Engine Condition',
+  'EI': 'Engine Indication',
+  'LB': 'Load Balance',
+  'TD': 'Takeoff Data',
+  'LD': 'Landing Data',
+  'S1': 'Fuel Data',
+  'S2': 'Fuel Data',
+  'S3': 'Fuel Data',
+  'D1': 'Departure Report',
+  'A1': 'Arrival Report',
+  'A2': 'Arrival Report',
+  'T1': 'Takeoff Report',
+  'T2': 'Takeoff Report',
+  'T3': 'Takeoff Report',
+  'T4': 'Takeoff Report',
+  'T5': 'Takeoff Report',
+  'T6': 'Takeoff Report',
+  'T7': 'Takeoff Report',
+  'T8': 'Takeoff Report',
+  'T9': 'Takeoff Report',
+};
+
+function acarsSubLabelName(sublabel) {
+  if (!sublabel) return '';
+  const name = ACARS_SUBLABELS[sublabel];
+  if (name) return `${name} (${sublabel})`;
+  return sublabel; // raw code for unknown/airline-specific sublabels
+}
+
+// ---- ACARS label lookup ----------------------------------------------------
+
+const ACARS_LABELS = {
+  '_d': 'Downlink ACK',
+  '_u': 'Uplink ACK',
+  'H1': 'Position / Weather',
+  'H2': 'Position',
+  'SA': 'Media Advisory',
+  'SQ': 'Squitter',
+  'Q0': 'AOC',
+  'Q1': 'AOC',
+  'Q2': 'AOC',
+  'Q3': 'AOC',
+  'Q4': 'AOC',
+  'Q5': 'AOC',
+  'Q6': 'AOC',
+  'Q7': 'AOC',
+  'Q8': 'AOC',
+  'Q9': 'AOC',
+  'A6': 'ADS-C',
+  'A7': 'ADS-C',
+  'B6': 'Airline Ops',
+  'B7': 'Airline Ops',
+  'C1': 'Airline Ops',
+  'C3': 'Airline Ops',
+  'D0': 'ATIS',
+  'E0': 'ATIS',
+  'F3': 'Airline Ops',
+  'FI': 'Flight Info',
+  'G1': 'Airline Ops',
+  'H3': 'Airline Ops',
+  'I1': 'Airline Ops',
+  'L1': 'Airline Ops',
+  'L2': 'Airline Ops',
+  'M1': 'Airline Ops',
+  'M2': 'Airline Ops',
+  'M3': 'Airline Ops',
+  'N1': 'Airline Ops',
+  'P1': 'Airline Ops',
+  'P2': 'Airline Ops',
+  'P3': 'Airline Ops',
+  'R1': 'Airline Ops',
+  'R2': 'Airline Ops',
+  'R3': 'Airline Ops',
+  'S1': 'Airline Ops',
+  'S2': 'Airline Ops',
+  'S3': 'Airline Ops',
+  'T1': 'Airline Ops',
+  'T2': 'Airline Ops',
+  'T3': 'Airline Ops',
+  'V1': 'Airline Ops',
+  'W1': 'Airline Ops',
+  'X1': 'Airline Ops',
+  '10': 'Airline Ops',
+  '11': 'Airline Ops',
+  '12': 'Airline Ops',
+  '13': 'Airline Ops',
+  '14': 'Airline Ops',
+  '15': 'Airline Ops',
+  '16': 'Weather Obs',
+  '17': 'Airline Ops',
+  '18': 'Airline Ops',
+  '19': 'Airline Ops',
+  '20': 'Airline Ops',
+  '21': 'Airline Ops',
+  '22': 'Airline Ops',
+  '5U': 'CPDLC',
+  '5V': 'CPDLC',
+  '5W': 'CPDLC',
+  '5X': 'CPDLC',
+  '5Y': 'CPDLC',
+  '5Z': 'CPDLC',
+};
+
+function acarsLabelName(label) {
+  if (!label) return '—';
+  const name = ACARS_LABELS[label];
+  if (name) return `${name} (${label})`;
+  return label;
+}
+
 // ---- Messages tab (Phase 1b) -----------------------------------------------
 
 // Active filter state
@@ -276,8 +398,8 @@ function renderMessagesTable() {
       <td class="mono dim">${fmtTime(msg.time)}</td>
       <td class="mono">${esc(msg.reg) || '—'}</td>
       <td class="mono">${esc(msg.flight) || '—'}</td>
-      <td class="mono msg-label">${esc(msg.label) || '—'}</td>
-      <td class="mono dim">${esc(msg.sublabel) || ''}</td>
+      <td class="msg-label-cell">${acarsLabelName(msg.label)}</td>
+      <td class="msg-sublabel-cell dim">${acarsSubLabelName(msg.sublabel)}</td>
       <td class="dim">${esc(gsName)}</td>
       <td class="mono dim">${msg.freq_khz ? msg.freq_khz.toLocaleString() : '—'}</td>
       <td class="msg-text-cell"><span class="msg-text-content" title="${fullText}">${shortText || '<em class="dim">—</em>'}</span></td>

@@ -1943,6 +1943,22 @@ td.empty {
   color: var(--accent);
 }
 
+/* Human-readable label cell in Messages tab */
+.msg-label-cell {
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 140px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Sublabel cell — slightly narrower, muted for unknown codes */
+.msg-sublabel-cell {
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 110px;
+}
+
 /* Weather rows — label H1 / sublabel WX */
 .msg-row--weather {
   background: rgba(88, 166, 255, 0.06);
