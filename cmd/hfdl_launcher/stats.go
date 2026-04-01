@@ -602,6 +602,29 @@ func newStatsStore(gsNames map[int]string, freqGSID map[int][]int, stations []gr
 	}
 }
 
+// recordAcBucket records acKey in the current 30-min activity bucket.
+// Must be called with s.mu held (write lock).
+func (s *statsStore) recordAcBucket(acKey string, now int64) {
+	bucketStart := (now / sigBucketSecs) * sigBucketSecs
+	if n := len(s.acBuckets); n > 0 && s.acBuckets[n-1].T == bucketStart {
+		b := &s.acBuckets[n-1]
+		if !b.keys[acKey] {
+			b.keys[acKey] = true
+			b.Count++
+		}
+	} else {
+		b := AircraftBucket{
+			T:     bucketStart,
+			Count: 1,
+			keys:  map[string]bool{acKey: true},
+		}
+		s.acBuckets = append(s.acBuckets, b)
+		if len(s.acBuckets) > maxSigBuckets {
+			s.acBuckets = s.acBuckets[len(s.acBuckets)-maxSigBuckets:]
+		}
+	}
+}
+
 // isValidPos returns true if the lat/lon is a real position (not the 180/180
 // sentinel that dumphfdl uses for "unknown").
 func isValidPos(lat, lon float64) bool {
@@ -779,6 +802,8 @@ func (s *statsStore) ingest(line string) {
 								if posUpdate == nil {
 									posUpdate = ac
 								}
+								// Record in activity bucket — only aircraft with a valid position
+								s.recordAcBucket(l16AcKey, now)
 							}
 							if l16Alt > 0 {
 								ac.AltFt = l16Alt
@@ -833,6 +858,8 @@ func (s *statsStore) ingest(line string) {
 								if posUpdate == nil {
 									posUpdate = ac
 								}
+								// Record in activity bucket — only aircraft with a valid position
+								s.recordAcBucket(posAcKey, now)
 							}
 							if parsedAlt > 0 {
 								ac.AltFt = parsedAlt
@@ -886,7 +913,7 @@ func (s *statsStore) ingest(line string) {
 				acKey = flight
 			}
 
-			// Increment message count for this aircraft and record in activity bucket
+			// Increment message count for this aircraft
 			if acKey != "" {
 				existing := s.aircraft[acKey]
 				if existing == nil {
@@ -894,25 +921,6 @@ func (s *statsStore) ingest(line string) {
 					s.aircraft[acKey] = existing
 				}
 				existing.MsgCount++
-				// Record this aircraft key in the current 30-min activity bucket
-				bucketStart := (now / sigBucketSecs) * sigBucketSecs
-				if n := len(s.acBuckets); n > 0 && s.acBuckets[n-1].T == bucketStart {
-					b := &s.acBuckets[n-1]
-					if !b.keys[acKey] {
-						b.keys[acKey] = true
-						b.Count++
-					}
-				} else {
-					b := AircraftBucket{
-						T:     bucketStart,
-						Count: 1,
-						keys:  map[string]bool{acKey: true},
-					}
-					s.acBuckets = append(s.acBuckets, b)
-					if len(s.acBuckets) > maxSigBuckets {
-						s.acBuckets = s.acBuckets[len(s.acBuckets)-maxSigBuckets:]
-					}
-				}
 				existing.SigLevel = h.SigLevel
 				// Update identity fields in case they're newly available
 				if icao != "" {
@@ -1070,6 +1078,8 @@ func (s *statsStore) ingest(line string) {
 						prev := ac.Track[n-2]
 						ac.Bearing = bearingDeg(prev.Lat, prev.Lon, lat, lon)
 					}
+					// Record in activity bucket — only aircraft with a valid position
+					s.recordAcBucket(acKey, now)
 					posUpdate = ac
 				}
 			}

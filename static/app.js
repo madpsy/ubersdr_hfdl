@@ -1177,12 +1177,25 @@ function renderPlanesActivityChart(buckets) {
     return `<div class="planes-activity-bar" title="${label}" style="height:${heightPct}%;background:${barColor};"></div>`;
   }).join('');
 
-  // Y-axis: 3 ticks — max at top, mid in middle, 0 at bottom
-  const midCount = Math.round(maxCount / 2);
+  // Y-axis: 3 ticks — round the top tick up to a clean number so the axis
+  // doesn't look like it contradicts the live aircraft count in the table.
+  // e.g. maxCount=9 → topTick=10, maxCount=36 → topTick=40
+  function niceMax(n) {
+    if (n <= 0) return 1;
+    const mag = Math.pow(10, Math.floor(Math.log10(n)));
+    const steps = [1, 2, 5, 10];
+    for (const s of steps) {
+      const candidate = Math.ceil(n / (mag * s)) * (mag * s);
+      if (candidate >= n) return candidate;
+    }
+    return Math.ceil(n / mag) * mag;
+  }
+  const topTick = niceMax(maxCount);
+  const midTick = Math.round(topTick / 2);
   const axis =
     `<div class="planes-activity-axis">` +
-      `<span class="planes-activity-tick">${maxCount}</span>` +
-      `<span class="planes-activity-tick">${midCount}</span>` +
+      `<span class="planes-activity-tick">${topTick}</span>` +
+      `<span class="planes-activity-tick">${midTick}</span>` +
       `<span class="planes-activity-tick">0</span>` +
     `</div>`;
 
