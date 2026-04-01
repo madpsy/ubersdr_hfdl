@@ -1305,6 +1305,21 @@ function initPlanesFilter() {
     planesFilterTerm = '';
     renderAircraftTable();
   });
+
+  // Delegated click on the planes table — clicking any row switches to the map
+  // tab and selects that aircraft (same as clicking its marker on the map).
+  const tbody = document.getElementById('planes-tbody');
+  if (tbody) {
+    tbody.addEventListener('click', (e) => {
+      const row = e.target.closest('tr[data-key]');
+      if (!row) return;
+      const key = row.dataset.key;
+      if (!key) return;
+      if (typeof selectAircraftFromPlanes === 'function') {
+        selectAircraftFromPlanes(key);
+      }
+    });
+  }
 }
 
 function renderAircraftTable() {
@@ -1370,7 +1385,7 @@ function renderAircraftTable() {
     const fcc = ac.last_freq_change_cause
       ? `<span title="${esc(ac.last_freq_change_cause)}">${esc(ac.last_freq_change_cause.slice(0, 20))}${ac.last_freq_change_cause.length > 20 ? '…' : ''}</span>`
       : '—';
-    return `<tr>
+    return `<tr class="planes-row--clickable" data-key="${esc(ac.key)}" title="Click to show on map">
       <td class="mono">${esc(ac.icao) || '—'}</td>
       <td class="mono">${esc(ac.reg)  || '—'}</td>
       <td class="mono">${esc(ac.flight) || '—'}</td>

@@ -2663,6 +2663,15 @@ td.empty {
    Planes tab — aircraft activity chart
    ========================================================================== */
 
+/* Clickable rows in the Planes tab */
+.planes-row--clickable {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.planes-row--clickable:hover {
+  background: rgba(88, 166, 255, 0.08);
+}
+
 .planes-activity-chart {
   width: 100%;
   height: 96px;

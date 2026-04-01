@@ -1727,7 +1727,7 @@ function upsertMarker(ac, fromSSE = false) {
     });
     marker.on('click', (e) => {
       L.DomEvent.stopPropagation(e);
-      selectAircraft(ac.key);
+      selectAircraft(ac.key, true);
     });
 
     aircraftMarkers[ac.key] = marker;
@@ -1745,11 +1745,13 @@ function upsertMarker(ac, fromSSE = false) {
 
   // If this is the selected aircraft, extend the live track polyline.
   // Cap at MAX_TRACK_POINTS to prevent unbounded memory growth.
+  // Also keep the colour in sync with the aircraft's current GS colour.
   if (selected && trackPolyline) {
     const latlngs = trackPolyline.getLatLngs();
     latlngs.push(L.latLng(ac.lat, ac.lon));
     if (latlngs.length > MAX_TRACK_POINTS) latlngs.splice(0, latlngs.length - MAX_TRACK_POINTS);
     trackPolyline.setLatLngs(latlngs);
+    trackPolyline.setStyle({ color: gsColorFor(ac.gs_id) });
   }
 
   renderLegend();
@@ -1762,7 +1764,7 @@ function upsertMarker(ac, fromSSE = false) {
 
 // ---- Selection / track -----------------------------------------------------
 
-function selectAircraft(key) {
+function selectAircraft(key, fitBounds = false) {
   // Clear any GS selection first (mutually exclusive)
   selectedGS  = null;
   selectedKey = key;
@@ -1783,18 +1785,63 @@ function selectAircraft(key) {
   fetch(`/aircraft/${encodeURIComponent(key)}/track`)
     .then(r => r.json())
     .then(track => {
-      if (!Array.isArray(track) || track.length < 2) return;
+      if (!Array.isArray(track) || track.length < 2) {
+        // No track — just pan to the marker if fitBounds was requested
+        if (fitBounds) {
+          const marker = aircraftMarkers[key];
+          if (marker && hfdlMap) hfdlMap.panTo(marker.getLatLng());
+        }
+        return;
+      }
       const latlngs = track.map(p => [p.lat, p.lon]);
+      // Use the same colour as the aircraft marker (keyed by its GS)
+      const ac = aircraftData[key];
+      const trackColor = ac ? gsColorFor(ac.gs_id) : '#58a6ff';
       trackPolyline = L.polyline(latlngs, {
-        color: '#58a6ff',
-        weight: 2,
-        opacity: 0.85,
-        dashArray: '5 5',
+        color:   trackColor,
+        weight:  3,
+        opacity: 1,
       }).addTo(hfdlMap);
+
+      // Fit the map so all historical positions (plus the current marker) are visible
+      if (fitBounds && hfdlMap) {
+        const bounds = L.latLngBounds(latlngs);
+        // Include the current marker position in case it is slightly outside the track
+        const marker = aircraftMarkers[key];
+        if (marker) bounds.extend(marker.getLatLng());
+        hfdlMap.fitBounds(bounds, { padding: [60, 60], maxZoom: 8 });
+      }
     })
     .catch(err => console.warn('track fetch error:', err));
   // Refresh propagation layer to show only this aircraft's paths
   if (showPropagationLayer) updatePropagationLayer();
+}
+
+/**
+ * Select an aircraft and switch to the map tab first.
+ * Called from the Planes tab row click handler in app.js.
+ * Switches the tab, waits for Leaflet to invalidate its size, then selects
+ * the aircraft and fits the map to its track.
+ *
+ * @param {string} key  Aircraft key (ICAO / reg / flight)
+ */
+function selectAircraftFromPlanes(key) {
+  // Switch to the map tab
+  const mapBtn = document.querySelector('.tab-btn[data-tab="map"]');
+  if (mapBtn) mapBtn.click();
+
+  // Give Leaflet time to invalidate size (tab switch fires invalidateSize after 50 ms)
+  // then select the aircraft and fit bounds.
+  setTimeout(() => {
+    selectAircraft(key, true);
+    // Also open the popup so the user gets immediate feedback
+    const marker = aircraftMarkers[key];
+    if (marker && hfdlMap) {
+      const ac = aircraftData[key];
+      if (ac) marker.setPopupContent(buildPopup(ac));
+      marker.openPopup();
+    }
+  }, 80);
 }
 
 function deselectAircraft() {
@@ -1814,6 +1861,8 @@ function deselectAircraft() {
   }
   // Restore all propagation paths
   if (showPropagationLayer) updatePropagationLayer();
+  // Fit the map to all visible aircraft so the user can see the full picture
+  fitToVisibleAircraft();
 }
 
 // ---- GS selection ----------------------------------------------------------
