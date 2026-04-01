@@ -974,6 +974,17 @@ func (s *statsStore) ingest(line string) {
 						existing.AvailableLinks = avail
 					}
 				}
+				// If a media-adv updated the datalink state on an aircraft that already
+				// has a valid position, broadcast a position event so the Planes tab and
+				// map popup reflect the new current_link / available_links immediately.
+				// Without this, the frontend only learns about datalink changes when the
+				// next position-bearing HFNPDU arrives (which may be minutes later).
+				if posUpdate == nil &&
+					h.LPDU.HFNPDU.ACARS != nil &&
+					h.LPDU.HFNPDU.ACARS.MediaAdv != nil &&
+					isValidPos(existing.Lat, existing.Lon) {
+					posUpdate = existing
+				}
 				// Phase 3d: aircraft-reported UTC time — format as "HH:MM:SS UTC"
 				if h.LPDU.HFNPDU.Time != nil {
 					t := h.LPDU.HFNPDU.Time
