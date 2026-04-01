@@ -1644,6 +1644,10 @@ function upsertMarker(ac, fromSSE = false) {
   if (!hfdlMap) return;
   if (!ac.lat || !ac.lon) return;
 
+  // Check whether the position actually changed before overwriting stored data
+  const prev = aircraftData[ac.key];
+  const posChanged = !prev || prev.lat !== ac.lat || prev.lon !== ac.lon;
+
   // Always keep the latest data for icon rebuilds
   aircraftData[ac.key] = ac;
 
@@ -1653,8 +1657,9 @@ function upsertMarker(ac, fromSSE = false) {
 
   const isNew = !aircraftMarkers[ac.key];
 
-  // Show bottom-centre notification for SSE-driven events only
-  if (fromSSE) {
+  // Show bottom-centre notification for SSE-driven events only,
+  // and only show "Updated" when the position actually moved.
+  if (fromSSE && (isNew || posChanged)) {
     const label = acLabel(ac);
     showMapNotification(isNew ? 'new' : 'update', label);
   }
