@@ -11,6 +11,31 @@ import (
 	"time"
 )
 
+// linkCodeName maps ARINC 635 Media Advisory link codes to short display names.
+// These match the MEDIA_ADV_LINKS table in the frontend (static/app.js) so that
+// the Planes tab, map tooltip, and Messages tab all show the same strings.
+var linkCodeName = map[string]string{
+	"H": "HF",
+	"V": "VHF",
+	"S": "SATCOM",
+	"G": "GACS",
+	"2": "VHF 2",
+	"3": "VHF 3",
+	"I": "Iridium",
+}
+
+// linkName returns the short display name for a Media Advisory link.
+// It prefers the code lookup; falls back to the raw descr string from dumphfdl.
+func linkName(code, descr string) string {
+	if n, ok := linkCodeName[strings.ToUpper(code)]; ok {
+		return n
+	}
+	if descr != "" {
+		return descr
+	}
+	return code
+}
+
 // parseLabel16Obs attempts to parse an ACARS label 16 weather/position observation.
 //
 // Format: HHMMSS,AAAAA,SSSS,HHH,N DD.DDD E DDD.DDD
@@ -958,17 +983,19 @@ func (s *statsStore) ingest(line string) {
 				if h.LPDU.HFNPDU.ACARS != nil &&
 					h.LPDU.HFNPDU.ACARS.MediaAdv != nil &&
 					h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink != nil {
-					existing.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Descr
+					cl := h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink
+					name := linkName(cl.Code, cl.Descr)
+					existing.CurrentLink = name
 					// Also populate RecentMessage for the Live Feed datalink column
-					rm.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Descr
+					rm.CurrentLink = name
 				}
 				if h.LPDU.HFNPDU.ACARS != nil &&
 					h.LPDU.HFNPDU.ACARS.MediaAdv != nil &&
 					len(h.LPDU.HFNPDU.ACARS.MediaAdv.LinksAvail) > 0 {
 					avail := make([]string, 0, len(h.LPDU.HFNPDU.ACARS.MediaAdv.LinksAvail))
 					for _, l := range h.LPDU.HFNPDU.ACARS.MediaAdv.LinksAvail {
-						if l.Descr != "" {
-							avail = append(avail, l.Descr)
+						if l.Code != "" || l.Descr != "" {
+							avail = append(avail, linkName(l.Code, l.Descr))
 						}
 					}
 					if len(avail) > 0 {
