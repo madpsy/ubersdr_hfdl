@@ -17,9 +17,10 @@ let receiverLatLng = null; // set by placeReceiverMarker(), used for range lines
 let rxRangeLine = null; // L.polyline drawn on aircraft hover, removed on mouseout
 
 // ---- Selection state -------------------------------------------------------
-let selectedKey  = null;    // currently selected aircraft key, or null
-let selectedGS   = null;    // currently selected GS id (number), or null
-let trackPolyline = null;   // L.polyline for the selected aircraft's track
+let selectedKey   = null;    // currently selected aircraft key, or null
+let selectedGS    = null;    // currently selected GS id (number), or null
+let trackPolyline = null;    // L.polyline for the selected aircraft's track
+let trackDotLayer = null;    // L.layerGroup of circle markers at each track position
 
 // ---- GS colour palette -----------------------------------------------------
 // 16 visually distinct colours that work on a dark map background.
@@ -1754,7 +1755,20 @@ function upsertMarker(ac, fromSSE = false) {
       latlngs.push(L.latLng(ac.lat, ac.lon));
       if (latlngs.length > MAX_TRACK_POINTS) latlngs.splice(0, latlngs.length - MAX_TRACK_POINTS);
       trackPolyline.setLatLngs(latlngs);
-      trackPolyline.setStyle({ color: gsColorFor(ac.gs_id) });
+      const trackColor = gsColorFor(ac.gs_id);
+      trackPolyline.setStyle({ color: trackColor });
+      // Add a new dot for this live position
+      if (trackDotLayer) {
+        trackDotLayer.addLayer(L.circleMarker([ac.lat, ac.lon], {
+          radius:      4,
+          color:       trackColor,
+          weight:      1.5,
+          opacity:     0.9,
+          fillColor:   trackColor,
+          fillOpacity: 0.55,
+          interactive: false,
+        }));
+      }
     }
     // Pan to keep the selected aircraft in view — only if it has moved outside
     // the current map bounds (avoids jarring movement when it's already visible).
@@ -1788,10 +1802,14 @@ function selectAircraft(key, fitBounds = false) {
     if (ac) marker.setIcon(makePlaneIcon(ac, k === key));
   }
 
-  // Remove old track
+  // Remove old track and dots
   if (trackPolyline) {
     trackPolyline.remove();
     trackPolyline = null;
+  }
+  if (trackDotLayer) {
+    trackDotLayer.remove();
+    trackDotLayer = null;
   }
 
   // Fetch and draw the track for the newly selected aircraft
@@ -1801,7 +1819,7 @@ function selectAircraft(key, fitBounds = false) {
       const ac = aircraftData[key];
       const trackColor = ac ? gsColorFor(ac.gs_id) : '#58a6ff';
 
-      // Draw the polyline if there are at least 2 points
+      // Draw the polyline and position dots if there are at least 2 points
       if (Array.isArray(track) && track.length >= 2) {
         const latlngs = track.map(p => [p.lat, p.lon]);
         trackPolyline = L.polyline(latlngs, {
@@ -1809,6 +1827,19 @@ function selectAircraft(key, fitBounds = false) {
           weight:  3,
           opacity: 1,
         }).addTo(hfdlMap);
+
+        // Add a small circle at each recorded position
+        trackDotLayer = L.layerGroup(
+          track.map(p => L.circleMarker([p.lat, p.lon], {
+            radius:      4,
+            color:       trackColor,
+            weight:      1.5,
+            opacity:     0.9,
+            fillColor:   trackColor,
+            fillOpacity: 0.55,
+            interactive: false,
+          }))
+        ).addTo(hfdlMap);
       }
 
       // Always fit/pan when requested, regardless of track length
@@ -1866,6 +1897,10 @@ function deselectAircraft() {
     trackPolyline.remove();
     trackPolyline = null;
   }
+  if (trackDotLayer) {
+    trackDotLayer.remove();
+    trackDotLayer = null;
+  }
 
   // Redraw all markers without dim
   for (const [k, marker] of Object.entries(aircraftMarkers)) {
@@ -1885,6 +1920,7 @@ function selectGS(gsId) {
   if (selectedKey) {
     selectedKey = null;
     if (trackPolyline) { trackPolyline.remove(); trackPolyline = null; }
+    if (trackDotLayer) { trackDotLayer.remove(); trackDotLayer = null; }
   }
   selectedGS = gsId;
 
