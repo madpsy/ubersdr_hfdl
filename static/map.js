@@ -1592,11 +1592,24 @@ function buildPopup(ac) {
       default:       return esc(code);
     }
   }
-  const dlIcon = ac.current_link ? linkIcon(ac.current_link) : null;
-  const dlHtml = dlIcon ? `Datalink: ${dlIcon}<br>` : '';
-  const availHtml = (ac.available_links && ac.available_links.length > 0)
-    ? `Available: ${ac.available_links.map(c => esc(c)).join(', ')}<br>`
-    : '';
+  const cur = ac.current_link ? ac.current_link.toUpperCase() : null;
+  let dlHtml = '';
+  if (cur) {
+    if (ac.available_links && ac.available_links.length > 0) {
+      const allLinks = [...ac.available_links];
+      if (!allLinks.map(l => l.toUpperCase()).includes(cur)) {
+        allLinks.unshift(ac.current_link);
+      }
+      const parts = allLinks.map(l =>
+        l.toUpperCase() === cur
+          ? `<strong>${esc(l)}</strong>`
+          : esc(l)
+      ).join(', ');
+      dlHtml = `Datalink: ${parts}<br>`;
+    } else {
+      dlHtml = `Datalink: <strong>${esc(ac.current_link)}</strong><br>`;
+    }
+  }
   const lqHtml = (ac.error_rate != null && (ac.mpdu_rx || ac.mpdu_tx))
     ? `Link quality: ${ac.error_rate.toFixed(1)}% err (${ac.mpdu_rx || 0} rx / ${ac.mpdu_tx || 0} tx)<br>`
     : '';
@@ -1617,7 +1630,6 @@ function buildPopup(ac) {
       ${trkHtml}
       ${windHtml}
       ${dlHtml}
-      ${availHtml}
       ${lqHtml}
       ${fccHtml}
       ${distHtml}

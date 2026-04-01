@@ -2554,7 +2554,7 @@ td.empty {
 .map-ac-notif {
   /* Direct child of the map container (position:relative), so centering works */
   position: absolute;
-  bottom: 36px;
+  bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
   /* Appearance */
@@ -2596,12 +2596,50 @@ td.empty {
 
 .planes-activity-chart {
   width: 100%;
-  height: 48px;
+  height: 96px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   padding: 6px 8px 4px;
   box-sizing: border-box;
   flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+/* Left Y-axis column */
+.planes-activity-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  width: 28px;
+  flex-shrink: 0;
+  padding-right: 4px;
+  padding-bottom: 0;
+}
+
+.planes-activity-tick {
+  font-size: 9px;
+  color: var(--muted, #8b949e);
+  line-height: 1;
+  user-select: none;
+}
+
+/* Bars area — positioned relative so guide lines can be absolute */
+.planes-activity-bars-wrap {
+  flex: 1;
+  position: relative;
+  height: 100%;
+}
+
+/* Faint horizontal guide lines at 50% and 100% */
+.planes-activity-guide {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(139,148,158,0.18);
+  pointer-events: none;
 }
 
 .planes-activity-bars {

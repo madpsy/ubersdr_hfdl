@@ -1162,10 +1162,7 @@ function renderPlanesActivityChart(buckets) {
   // Build bars oldest-left → newest-right
   const bars = buckets.map(b => {
     const heightPct = Math.max(4, Math.round((b.n / maxCount) * 100));
-    // Colour: interpolate from muted (quiet) → accent (busy) based on relative count
-    // Use opacity on the accent colour so quiet bars are visually distinct
     const intensity = b.n / maxCount; // 0..1
-    // Low = muted blue-grey, high = accent blue (#58a6ff)
     const alpha = 0.15 + intensity * 0.85; // 0.15 → 1.0
     const barColor = `rgba(88,166,255,${alpha.toFixed(2)})`;
 
@@ -1180,7 +1177,26 @@ function renderPlanesActivityChart(buckets) {
     return `<div class="planes-activity-bar" title="${label}" style="height:${heightPct}%;background:${barColor};"></div>`;
   }).join('');
 
-  container.innerHTML = `<div class="planes-activity-bars">${bars}</div>`;
+  // Y-axis: 3 ticks — max at top, mid in middle, 0 at bottom
+  const midCount = Math.round(maxCount / 2);
+  const axis =
+    `<div class="planes-activity-axis">` +
+      `<span class="planes-activity-tick">${maxCount}</span>` +
+      `<span class="planes-activity-tick">${midCount}</span>` +
+      `<span class="planes-activity-tick">0</span>` +
+    `</div>`;
+
+  // Guide lines at 50% and 100% from bottom (top = 0%, bottom = 100%)
+  const guides =
+    `<div class="planes-activity-guide" style="top:0%"></div>` +
+    `<div class="planes-activity-guide" style="top:50%"></div>`;
+
+  container.innerHTML =
+    axis +
+    `<div class="planes-activity-bars-wrap">` +
+      guides +
+      `<div class="planes-activity-bars">${bars}</div>` +
+    `</div>`;
 }
 
 // ---- Planes tab ------------------------------------------------------------
@@ -1241,7 +1257,7 @@ function renderAircraftTable() {
   }
 
   if (list.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="14" class="empty">${planesFilterTerm ? 'No aircraft match the filter…' : 'No aircraft seen yet…'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="13" class="empty">${planesFilterTerm ? 'No aircraft match the filter…' : 'No aircraft seen yet…'}</td></tr>`;
     return;
   }
 
@@ -1257,11 +1273,23 @@ function renderAircraftTable() {
     const freq = ac.freq_khz ? ac.freq_khz.toLocaleString() : '—';
     const sig  = ac.sig_level != null ? ac.sig_level.toFixed(1) : '—';
     const sigCls = ac.sig_level != null ? sigClass(ac.sig_level) : '';
-    // Phase 3c: datalink and available links
-    const dl = datalinkLabel(ac.current_link);
-    const availLinks = (ac.available_links && ac.available_links.length > 0)
-      ? ac.available_links.map(c => esc(c)).join(', ')
-      : '—';
+    // Phase 3c: datalink — show all available links with current in bold
+    const cur = ac.current_link ? ac.current_link.toUpperCase() : null;
+    let dlCell;
+    if (ac.available_links && ac.available_links.length > 0) {
+      // Build a set of all links: available_links union current (in case current isn't listed)
+      const allLinks = [...ac.available_links];
+      if (cur && !allLinks.map(l => l.toUpperCase()).includes(cur)) {
+        allLinks.unshift(ac.current_link);
+      }
+      dlCell = allLinks.map(l =>
+        l.toUpperCase() === cur
+          ? `<strong>${esc(l)}</strong>`
+          : esc(l)
+      ).join(', ');
+    } else {
+      dlCell = cur ? `<strong>${esc(ac.current_link)}</strong>` : '—';
+    }
     // Phase 3b: link quality
     let lqCell = '—';
     if (ac.error_rate != null && (ac.mpdu_rx || ac.mpdu_tx)) {
@@ -1280,8 +1308,7 @@ function renderAircraftTable() {
       <td class="mono dim">${lon}</td>
       <td class="mono">${freq}</td>
       <td>${esc(gsName)}</td>
-      <td class="mono">${dl || '—'}</td>
-      <td class="mono">${availLinks}</td>
+      <td class="mono">${dlCell}</td>
       <td class="mono ${sigCls}">${sig !== '—' ? sig + ' dBFS' : '—'}</td>
       <td>${lqCell}</td>
       <td class="dim">${fcc}</td>
