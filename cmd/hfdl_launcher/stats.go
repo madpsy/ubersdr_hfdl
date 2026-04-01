@@ -186,6 +186,19 @@ func bearingDeg(lat1, lon1, lat2, lon2 float64) float64 {
 	return math.Mod(math.Atan2(y, x)*180/math.Pi+360, 360)
 }
 
+// haversineKm returns the great-circle distance in kilometres between two
+// lat/lon points using the Haversine formula.
+func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
+	const R = 6371.0
+	const toRad = math.Pi / 180
+	dLat := (lat2 - lat1) * toRad
+	dLon := (lon2 - lon1) * toRad
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1*toRad)*math.Cos(lat2*toRad)*
+			math.Sin(dLon/2)*math.Sin(dLon/2)
+	return R * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
+
 const maxRecentMessages = 200
 const maxRecentEvents = 200
 
@@ -482,6 +495,10 @@ type AircraftState struct {
 	// ARINC 620 position report: wind
 	WindDirDeg float64 `json:"wind_dir_deg,omitempty"` // degrees true
 	WindSpdKts float64 `json:"wind_spd_kts,omitempty"` // knots
+	// Accumulated great-circle distance between consecutive position reports (km).
+	// Computed server-side using the Haversine formula; never reset while the
+	// aircraft is in the store.
+	TrackedKm float64 `json:"tracked_km,omitempty"`
 }
 
 // RecentMessage is a trimmed record for the live feed.
@@ -824,6 +841,7 @@ func (s *statsStore) ingest(line string) {
 								if n := len(ac.Track); n >= 2 {
 									prev := ac.Track[n-2]
 									ac.Bearing = bearingDeg(prev.Lat, prev.Lon, l16Lat, l16Lon)
+									ac.TrackedKm += haversineKm(prev.Lat, prev.Lon, l16Lat, l16Lon)
 								}
 								if posUpdate == nil {
 									posUpdate = ac
@@ -880,6 +898,7 @@ func (s *statsStore) ingest(line string) {
 								if n := len(ac.Track); n >= 2 {
 									prev := ac.Track[n-2]
 									ac.Bearing = bearingDeg(prev.Lat, prev.Lon, parsedLat, parsedLon)
+									ac.TrackedKm += haversineKm(prev.Lat, prev.Lon, parsedLat, parsedLon)
 								}
 								if posUpdate == nil {
 									posUpdate = ac
@@ -1116,6 +1135,7 @@ func (s *statsStore) ingest(line string) {
 					if n := len(ac.Track); n >= 2 {
 						prev := ac.Track[n-2]
 						ac.Bearing = bearingDeg(prev.Lat, prev.Lon, lat, lon)
+						ac.TrackedKm += haversineKm(prev.Lat, prev.Lon, lat, lon)
 					}
 					// Record in activity bucket — only aircraft with a valid position
 					s.recordAcBucket(acKey, now)

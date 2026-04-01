@@ -141,9 +141,8 @@ function renderHistory() {
         L.DomEvent.stopPropagation(e);
         const key = row.dataset.key;
         if (!key) return;
-        selectAircraft(key);
+        selectAircraft(key, true);
         const marker = aircraftMarkers[key];
-        if (marker) hfdlMap.panTo(marker.getLatLng());
       });
 
       // Delegated mouseover: show popup and range line for the hovered aircraft.
@@ -1349,9 +1348,8 @@ function renderDistanceStats() {
         L.DomEvent.stopPropagation(e);
         const key = el.dataset.key;
         if (!key) return;
-        selectAircraft(key);
+        selectAircraft(key, true);
         const marker = aircraftMarkers[key];
-        if (marker) hfdlMap.panTo(marker.getLatLng());
       });
 
       // Delegated mouseover: show popup and range line.
@@ -1604,6 +1602,10 @@ function buildPopup(ac) {
   const distHtml = distKm !== null
     ? `Distance: ${fmtKm(distKm)}<br>`
     : '';
+  const trackedKm = ac.tracked_km || 0;
+  const trackedHtml = trackedKm > 0
+    ? `Tracked: ${trackedKm >= 1000 ? (trackedKm / 1000).toFixed(1) + 'k km' : fmtKm(trackedKm)}<br>`
+    : '';
   // Section 2.6.4: ADS-C altitude, speed, track
   const altHtml = ac.alt_valid && ac.alt_ft
     ? `Altitude: ${Math.round(ac.alt_ft).toLocaleString()} ft<br>`
@@ -1669,6 +1671,7 @@ function buildPopup(ac) {
       ${lqHtml}
       ${fccHtml}
       ${distHtml}
+      ${trackedHtml}
       ${ac.msg_count ? `Messages: ${ac.msg_count.toLocaleString()}<br>` : ''}
       Last seen: ${lastSeen}
     </div>`;

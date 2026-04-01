@@ -1342,7 +1342,7 @@ function renderAircraftTable() {
   }
 
   if (list.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="13" class="empty">${planesFilterTerm ? 'No aircraft match the filter…' : 'No aircraft seen yet…'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="14" class="empty">${planesFilterTerm ? 'No aircraft match the filter…' : 'No aircraft seen yet…'}</td></tr>`;
     return;
   }
 
@@ -1385,6 +1385,13 @@ function renderAircraftTable() {
     const fcc = ac.last_freq_change_cause
       ? `<span title="${esc(ac.last_freq_change_cause)}">${esc(ac.last_freq_change_cause.slice(0, 20))}${ac.last_freq_change_cause.length > 20 ? '…' : ''}</span>`
       : '—';
+    // Tracked distance — accumulated great-circle km from the backend
+    const trackedKm = ac.tracked_km || 0;
+    const tracked = trackedKm > 0
+      ? (trackedKm >= 1000
+          ? (trackedKm / 1000).toFixed(1) + 'k km'
+          : Math.round(trackedKm) + ' km')
+      : '—';
     return `<tr class="planes-row--clickable" data-key="${esc(ac.key)}" title="Click to show on map">
       <td class="mono">${esc(ac.icao) || '—'}</td>
       <td class="mono">${esc(ac.reg)  || '—'}</td>
@@ -1398,6 +1405,7 @@ function renderAircraftTable() {
       <td>${lqCell}</td>
       <td class="dim">${fcc}</td>
       <td class="mono">${ac.msg_count || 0}</td>
+      <td class="mono dim">${tracked}</td>
       <td class="dim">${fmtDateTime(ac.last_seen)}</td>
     </tr>`;
   }).join('');
