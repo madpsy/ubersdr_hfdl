@@ -737,6 +737,7 @@ func (s *statsStore) ingest(line string) {
 
 	// Extract position and identity from LPDU if present
 	var posUpdate *AircraftState
+	var mergedFromKey string // set when a callsign/reg entry is merged into an ICAO entry
 	if h.LPDU != nil {
 		rm.SrcType = h.LPDU.Src.Type
 		rm.SrcID = h.LPDU.Src.ID
@@ -956,6 +957,32 @@ func (s *statsStore) ingest(line string) {
 			}
 			if acKey == "" {
 				acKey = flight
+			}
+
+			// When we now have an ICAO hex, check whether this aircraft was
+			// previously tracked under a callsign or registration key.
+			// If so, merge the old entry into the ICAO-keyed one so we don't
+			// accumulate duplicate rows in the planes table / map.
+			if icao != "" && s.aircraft[icao] == nil {
+				// Look for an existing entry whose flight or reg matches
+				for oldKey, old := range s.aircraft {
+					if oldKey == icao {
+						continue
+					}
+					if (flight != "" && old.Flight == flight) ||
+						(reg != "" && old.Reg == reg) {
+						// Merge: copy accumulated state into a new ICAO-keyed entry
+						merged := *old // shallow copy
+						merged.Key = icao
+						merged.ICAO = icao
+						s.aircraft[icao] = &merged
+						delete(s.aircraft, oldKey)
+						mergedFromKey = oldKey
+						// Re-point acKey so the rest of ingest updates the merged entry
+						acKey = icao
+						break
+					}
+				}
 			}
 
 			// Increment message count for this aircraft
@@ -1212,6 +1239,14 @@ func (s *statsStore) ingest(line string) {
 
 	s.mu.Unlock()
 
+	// If we merged a callsign/reg-keyed entry into an ICAO-keyed one, tell the
+	// browser to remove the old marker so it doesn't linger on the map.
+	if mergedFromKey != "" {
+		if ev, err := json.Marshal(sseEvent{Type: "purge", Data: mergedFromKey}); err == nil {
+			s.broadcast(string(ev))
+		}
+	}
+
 	// Broadcast message event to SSE subscribers (outside the main lock)
 	if ev, err := json.Marshal(sseEvent{Type: "message", Data: rm}); err == nil {
 		s.broadcast(string(ev))
@@ -1437,6 +1472,18 @@ func (s *statsStore) aircraftSnapshot() []*AircraftState {
 		return result[i].LastSeen > result[j].LastSeen
 	})
 	return result
+}
+
+// aircraftIdentity returns the registration and flight callsign known for the
+// given ICAO hex (or any key). Returns empty strings if the aircraft is not in
+// the store or the fields are not yet populated.
+func (s *statsStore) aircraftIdentity(key string) (reg, flight string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if ac, ok := s.aircraft[key]; ok {
+		return ac.Reg, ac.Flight
+	}
+	return "", ""
 }
 
 // trackSnapshot returns a copy of the position history for the given aircraft key.

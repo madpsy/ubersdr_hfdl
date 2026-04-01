@@ -1625,14 +1625,15 @@ function openAircraftPanel(ac) {
 
   const icao   = _hexIcao.toUpperCase();
   const reg    = ac.reg || '';
-  const psKey  = reg ? icao + ':' + reg : icao;
 
   // Helper: format a route airport object returned by /aircraft/{icao}
   function fmtAirport(ap) {
     if (!ap) return '';
     const code = ap.iata || ap.icao || '';
     const city = ap.city || ap.name || '';
-    return code && city ? code + ' – ' + city : code || city;
+    const country = ap.country || '';
+    const place = city && country ? city + ', ' + country : city || country;
+    return code && place ? code + ' – ' + place : code || place;
   }
 
   // Fetch unified aircraft enrichment (adsbdb primary, hexdb fallback — done server-side)
@@ -1643,19 +1644,18 @@ function openAircraftPanel(ac) {
         .then(data => { _aircraftCache.set(icao, data); return data; })
         .catch(() => { _aircraftCache.set(icao, null); return null; });
 
-  // Fetch Planespotters photo
-  const photoURL = '/aircraft/' + icao + '/photo' + (reg ? '?reg=' + encodeURIComponent(reg) : '');
-  const photoPromise = _photoCache.has(psKey)
-    ? Promise.resolve(_photoCache.get(psKey))
-    : fetch(photoURL)
+  // Fetch Planespotters photo — backend resolves reg from the live store automatically
+  const photoPromise = _photoCache.has(icao)
+    ? Promise.resolve(_photoCache.get(icao))
+    : fetch('/aircraft/' + icao + '/photo')
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           const photo = data && Array.isArray(data.photos) && data.photos.length > 0
             ? data.photos[0] : null;
-          _photoCache.set(psKey, photo);
+          _photoCache.set(icao, photo);
           return photo;
         })
-        .catch(() => { _photoCache.set(psKey, null); return null; });
+        .catch(() => { _photoCache.set(icao, null); return null; });
 
   // Apply enrichment result
   acPromise.then(data => {
@@ -1675,6 +1675,7 @@ function openAircraftPanel(ac) {
       }
     }
     setField('ac-panel-iata-flight',  data.iata_flight   || '');
+    setField('ac-panel-airline-iata', data.airline_iata  || '');
     setField('ac-panel-manufacturer', data.manufacturer  || '');
     setField('ac-panel-icao-type',    data.icao_type     || '');
     setField('ac-panel-country',      data.country       || '');

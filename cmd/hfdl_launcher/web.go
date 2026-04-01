@@ -81,11 +81,12 @@ func (c *lruCache) set(key string, value []byte) {
 	c.items[key] = el
 }
 
-// Package-level caches — 1000 entries, 24-hour TTL (aircraft registrations
-// and photos don't change often).
+// Package-level caches — 1000 entries.
+// Enrichment TTL: 1 minute (short so route data stays fresh across flights).
+// Photo TTL: 10 minutes (photos are stable but not permanent).
 var (
-	aircraftCache = newLRUCache(1000, 24*time.Hour) // unified adsbdb+hexdb result
-	photoCache    = newLRUCache(1000, 24*time.Hour) // planespotters photo result
+	aircraftCache = newLRUCache(1000, 1*time.Minute)  // unified adsbdb+hexdb result
+	photoCache    = newLRUCache(1000, 10*time.Minute) // planespotters photo result
 )
 
 // apiClient is an http.Client with a short timeout for external API calls.
@@ -100,16 +101,18 @@ type aircraftEnrichment struct {
 	Registration string        `json:"registration,omitempty"`
 	Country      string        `json:"country,omitempty"`
 	IATAFlight   string        `json:"iata_flight,omitempty"`
+	AirlineIATA  string        `json:"airline_iata,omitempty"`
 	Origin       *routeAirport `json:"origin,omitempty"`
 	Destination  *routeAirport `json:"destination,omitempty"`
 	Source       string        `json:"source,omitempty"` // "adsbdb" | "hexdb" | ""
 }
 
 type routeAirport struct {
-	ICAO string `json:"icao,omitempty"`
-	IATA string `json:"iata,omitempty"`
-	Name string `json:"name,omitempty"`
-	City string `json:"city,omitempty"`
+	ICAO    string `json:"icao,omitempty"`
+	IATA    string `json:"iata,omitempty"`
+	Name    string `json:"name,omitempty"`
+	City    string `json:"city,omitempty"`
+	Country string `json:"country,omitempty"`
 }
 
 // instanceInfo is the JSON representation of one running IQ window.
@@ -264,7 +267,13 @@ func startWebServer(port int, staticDir string, store *statsStore, instances []*
 
 		case "photo":
 			icao := key
-			reg := r.URL.Query().Get("reg")
+			// Prefer reg from the live store; fall back to query param for
+			// clients that still pass it explicitly.
+			storeReg, _ := store.aircraftIdentity(icao)
+			reg := storeReg
+			if reg == "" {
+				reg = r.URL.Query().Get("reg")
+			}
 			cacheKey := icao
 			if reg != "" {
 				cacheKey = icao + ":" + reg
@@ -302,7 +311,63 @@ func startWebServer(port int, staticDir string, store *statsStore, instances []*
 			}
 			result := aircraftEnrichment{}
 
-			// --- Primary: adsbdb ---
+			// Look up reg and flight from the live store so we can use them
+			// as additional lookup keys even if the frontend didn't supply them.
+			_, knownFlight := store.aircraftIdentity(icao)
+
+			// adsbdb flightroute struct — reused for both ICAO and callsign lookups.
+			type adsbdbAirport struct {
+				ICAOCode     string `json:"icao_code"`
+				IATACode     string `json:"iata_code"`
+				Name         string `json:"name"`
+				Municipality string `json:"municipality"`
+				CountryName  string `json:"country_name"`
+			}
+			type adsbdbFlightroute struct {
+				CallsignIATA string `json:"callsign_iata"`
+				Airline      *struct {
+					Name string `json:"name"`
+					IATA string `json:"iata"`
+				} `json:"airline"`
+				Origin      *adsbdbAirport `json:"origin"`
+				Destination *adsbdbAirport `json:"destination"`
+			}
+			applyRoute := func(fr *adsbdbFlightroute) {
+				if fr == nil {
+					return
+				}
+				if fr.Airline != nil {
+					if result.Operator == "" {
+						result.Operator = fr.Airline.Name
+					}
+					if result.AirlineIATA == "" {
+						result.AirlineIATA = fr.Airline.IATA
+					}
+				}
+				if fr.CallsignIATA != "" && result.IATAFlight == "" {
+					result.IATAFlight = fr.CallsignIATA
+				}
+				if fr.Origin != nil && result.Origin == nil {
+					result.Origin = &routeAirport{
+						ICAO:    fr.Origin.ICAOCode,
+						IATA:    fr.Origin.IATACode,
+						Name:    fr.Origin.Name,
+						City:    fr.Origin.Municipality,
+						Country: fr.Origin.CountryName,
+					}
+				}
+				if fr.Destination != nil && result.Destination == nil {
+					result.Destination = &routeAirport{
+						ICAO:    fr.Destination.ICAOCode,
+						IATA:    fr.Destination.IATACode,
+						Name:    fr.Destination.Name,
+						City:    fr.Destination.Municipality,
+						Country: fr.Destination.CountryName,
+					}
+				}
+			}
+
+			// --- Primary: adsbdb by ICAO hex ---
 			if resp, err := apiClient.Get("https://api.adsbdb.com/v0/aircraft/" + icao); err == nil {
 				defer resp.Body.Close() //nolint:errcheck
 				if resp.StatusCode == http.StatusOK {
@@ -316,31 +381,12 @@ func startWebServer(port int, staticDir string, store *statsStore, instances []*
 								Registration               string `json:"registration"`
 								RegisteredOwnerCountryName string `json:"registered_owner_country_name"`
 							} `json:"aircraft"`
-							Flightroute *struct {
-								CallsignIATA string `json:"callsign_iata"`
-								Airline      *struct {
-									Name string `json:"name"`
-								} `json:"airline"`
-								Origin *struct {
-									ICAOCode     string `json:"icao_code"`
-									IATACode     string `json:"iata_code"`
-									Name         string `json:"name"`
-									Municipality string `json:"municipality"`
-								} `json:"origin"`
-								Destination *struct {
-									ICAOCode     string `json:"icao_code"`
-									IATACode     string `json:"iata_code"`
-									Name         string `json:"name"`
-									Municipality string `json:"municipality"`
-								} `json:"destination"`
-							} `json:"flightroute"`
+							Flightroute *adsbdbFlightroute `json:"flightroute"`
 						} `json:"response"`
 					}
 					if body, err2 := io.ReadAll(io.LimitReader(resp.Body, 64*1024)); err2 == nil {
 						if json.Unmarshal(body, &adData) == nil {
-							ac := adData.Response.Aircraft
-							fr := adData.Response.Flightroute
-							if ac != nil {
+							if ac := adData.Response.Aircraft; ac != nil {
 								result.Operator = ac.RegisteredOwner
 								result.Type = ac.Type
 								result.ICAOType = ac.ICAOType
@@ -348,32 +394,31 @@ func startWebServer(port int, staticDir string, store *statsStore, instances []*
 								result.Registration = ac.Registration
 								result.Country = ac.RegisteredOwnerCountryName
 							}
-							if result.Operator == "" && fr != nil && fr.Airline != nil {
-								result.Operator = fr.Airline.Name
-							}
-							if fr != nil && fr.CallsignIATA != "" {
-								result.IATAFlight = fr.CallsignIATA
-							}
-							if fr != nil {
-								if fr.Origin != nil {
-									result.Origin = &routeAirport{
-										ICAO: fr.Origin.ICAOCode,
-										IATA: fr.Origin.IATACode,
-										Name: fr.Origin.Name,
-										City: fr.Origin.Municipality,
-									}
-								}
-								if fr.Destination != nil {
-									result.Destination = &routeAirport{
-										ICAO: fr.Destination.ICAOCode,
-										IATA: fr.Destination.IATACode,
-										Name: fr.Destination.Name,
-										City: fr.Destination.Municipality,
-									}
-								}
-							}
+							applyRoute(adData.Response.Flightroute)
 							if result.Operator != "" || result.Type != "" {
 								result.Source = "adsbdb"
+							}
+						}
+					}
+				}
+			}
+
+			// --- Route fallback: adsbdb by callsign (when ICAO lookup had no route) ---
+			if knownFlight != "" && result.Origin == nil && result.Destination == nil {
+				if resp, err := apiClient.Get("https://api.adsbdb.com/v0/callsign/" + knownFlight); err == nil {
+					defer resp.Body.Close() //nolint:errcheck
+					if resp.StatusCode == http.StatusOK {
+						var csData struct {
+							Response struct {
+								Flightroute *adsbdbFlightroute `json:"flightroute"`
+							} `json:"response"`
+						}
+						if body, err2 := io.ReadAll(io.LimitReader(resp.Body, 64*1024)); err2 == nil {
+							if json.Unmarshal(body, &csData) == nil {
+								applyRoute(csData.Response.Flightroute)
+								if result.Source == "" && (result.Operator != "" || result.Type != "") {
+									result.Source = "adsbdb-callsign"
+								}
 							}
 						}
 					}
