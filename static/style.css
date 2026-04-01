@@ -773,6 +773,11 @@ td.empty {
   display: none;
 }
 
+/* Always show the label for the selected aircraft, even when labels are off */
+.hide-ac-labels .ac-marker--selected .ac-label {
+  display: block;
+}
+
 /* ---- Map stats counter (bottom-left) ---- */
 
 .map-stats-ctrl {
