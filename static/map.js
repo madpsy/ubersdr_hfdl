@@ -1832,9 +1832,9 @@ function updateAircraftCount() {
 // ---- Handle SSE events -----------------------------------------------------
 
 function handlePositionEvent(ac) {
+  pushHistory(ac);
   upsertMarker(ac, true);
   updateAircraftCount();
-  pushHistory(ac);
 }
 
 function handlePurgeEvent(key) {
