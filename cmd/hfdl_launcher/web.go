@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/list"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,82 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
+)
+
+// ---------------------------------------------------------------------------
+// Simple LRU cache for external API proxy responses
+// ---------------------------------------------------------------------------
+
+type lruEntry struct {
+	key     string
+	value   []byte
+	fetched time.Time
+}
+
+type lruCache struct {
+	mu    sync.Mutex
+	cap   int
+	ttl   time.Duration
+	items map[string]*list.Element
+	evict *list.List
+}
+
+func newLRUCache(capacity int, ttl time.Duration) *lruCache {
+	return &lruCache{
+		cap:   capacity,
+		ttl:   ttl,
+		items: make(map[string]*list.Element),
+		evict: list.New(),
+	}
+}
+
+// get returns the cached value and true, or nil and false if missing/expired.
+func (c *lruCache) get(key string) ([]byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.items[key]
+	if !ok {
+		return nil, false
+	}
+	entry := el.Value.(*lruEntry)
+	if c.ttl > 0 && time.Since(entry.fetched) > c.ttl {
+		c.evict.Remove(el)
+		delete(c.items, key)
+		return nil, false
+	}
+	c.evict.MoveToFront(el)
+	return entry.value, true
+}
+
+// set stores a value, evicting the LRU entry if at capacity.
+func (c *lruCache) set(key string, value []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.items[key]; ok {
+		c.evict.MoveToFront(el)
+		el.Value.(*lruEntry).value = value
+		el.Value.(*lruEntry).fetched = time.Now()
+		return
+	}
+	if c.evict.Len() >= c.cap {
+		oldest := c.evict.Back()
+		if oldest != nil {
+			c.evict.Remove(oldest)
+			delete(c.items, oldest.Value.(*lruEntry).key)
+		}
+	}
+	entry := &lruEntry{key: key, value: value, fetched: time.Now()}
+	el := c.evict.PushFront(entry)
+	c.items[key] = el
+}
+
+// Package-level caches — 1000 entries, 24-hour TTL (aircraft registrations
+// and photos don't change often).
+var (
+	hexdbCache         = newLRUCache(1000, 24*time.Hour)
+	planespottersCache = newLRUCache(1000, 24*time.Hour)
 )
 
 // instanceInfo is the JSON representation of one running IQ window.
@@ -399,6 +476,86 @@ func startWebServer(port int, staticDir string, store *statsStore, instances []*
 		if err := json.NewEncoder(w).Encode(msgs); err != nil {
 			log.Printf("web: /weather encode error: %v", err)
 		}
+	})
+
+	// /proxy/hexdb/{icao} — proxy Hexdb.io aircraft lookup with LRU cache
+	mux.HandleFunc("/proxy/hexdb/", func(w http.ResponseWriter, r *http.Request) {
+		icao := strings.TrimPrefix(r.URL.Path, "/proxy/hexdb/")
+		icao = strings.Trim(icao, "/")
+		if icao == "" {
+			http.Error(w, `{"error":"missing ICAO"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		if cached, ok := hexdbCache.get(icao); ok {
+			w.Write(cached) //nolint:errcheck
+			return
+		}
+
+		upstream := "https://hexdb.io/api/v1/aircraft/" + icao
+		resp, err := http.Get(upstream) //nolint:noctx
+		if err != nil {
+			http.Error(w, `{"error":"hexdb fetch failed"}`, http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		if err != nil {
+			http.Error(w, `{"error":"hexdb read failed"}`, http.StatusBadGateway)
+			return
+		}
+		if resp.StatusCode == http.StatusOK {
+			hexdbCache.set(icao, body)
+		}
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body) //nolint:errcheck
+	})
+
+	// /proxy/planespotters/{icao} — proxy Planespotters photo lookup with LRU cache
+	mux.HandleFunc("/proxy/planespotters/", func(w http.ResponseWriter, r *http.Request) {
+		icao := strings.TrimPrefix(r.URL.Path, "/proxy/planespotters/")
+		icao = strings.Trim(icao, "/")
+		if icao == "" {
+			http.Error(w, `{"error":"missing ICAO"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		// Build cache key including optional reg/type query params
+		reg := r.URL.Query().Get("reg")
+		cacheKey := icao
+		if reg != "" {
+			cacheKey = icao + ":" + reg
+		}
+
+		if cached, ok := planespottersCache.get(cacheKey); ok {
+			w.Write(cached) //nolint:errcheck
+			return
+		}
+
+		upstream := "https://api.planespotters.net/pub/photos/hex/" + icao
+		if reg != "" {
+			upstream += "?reg=" + reg
+		}
+		resp, err := http.Get(upstream) //nolint:noctx
+		if err != nil {
+			http.Error(w, `{"error":"planespotters fetch failed"}`, http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		if err != nil {
+			http.Error(w, `{"error":"planespotters read failed"}`, http.StatusBadGateway)
+			return
+		}
+		if resp.StatusCode == http.StatusOK {
+			planespottersCache.set(cacheKey, body)
+		}
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body) //nolint:errcheck
 	})
 
 	// /events — Server-Sent Events stream

@@ -55,9 +55,8 @@ function gsColorFor(gsId) {
   return gsColorMap[gsId];
 }
 
-// ---- Recent positions history ----------------------------------------------
+// ---- Top positions panel ---------------------------------------------------
 const MAX_HISTORY   = 10;
-const posHistory    = []; // [{key, label, gsId, time, posCount}] newest-first, capped at MAX_HISTORY for display
 const posCountStore = {}; // key → posCount for ALL aircraft (never evicted)
 
 let historyControl = null;
@@ -78,43 +77,36 @@ function timeAgo(unixSec) {
 }
 
 function pushHistory(ac) {
-  // Increment the persistent per-aircraft position counter (survives eviction
-  // from the display list when more than MAX_HISTORY aircraft are active).
+  // Increment the persistent per-aircraft position counter.
   posCountStore[ac.key] = (posCountStore[ac.key] || 0) + 1;
-  const posCount = posCountStore[ac.key];
-
-  // Remove any existing entry for this aircraft so it moves to the top
-  const idx = posHistory.findIndex(e => e.key === ac.key);
-  if (idx !== -1) posHistory.splice(idx, 1);
-  // Prefer gs_id from the live aircraftData store (populated by upsertMarker)
-  // over the value on the raw ac object, which may be absent in the initial
-  // /aircraft page-load snapshot but present after the first SSE position event.
-  const liveGsId = (aircraftData[ac.key] || {}).gs_id || ac.gs_id;
-  posHistory.unshift({
-    key: ac.key,
-    label: acLabel(ac),
-    gsId: liveGsId,
-    time: ac.last_seen || Math.floor(Date.now() / 1000),
-    posCount,
-  });
-  // Cap the display list at MAX_HISTORY — posCountStore retains counts for all aircraft.
-  if (posHistory.length > MAX_HISTORY) posHistory.length = MAX_HISTORY;
   renderHistory();
 }
 
 function renderHistory() {
   if (!hfdlMap) return;
 
-  let html = '<div class="map-history"><div class="map-history__title">Recent positions</div>';
-  if (posHistory.length === 0) {
+  // Build top-10 list from posCountStore, restricted to aircraft currently on the map.
+  const entries = Object.entries(posCountStore)
+    .filter(([key]) => !!aircraftData[key])   // skip purged aircraft
+    .sort((a, b) => b[1] - a[1])              // descending by position count
+    .slice(0, MAX_HISTORY)
+    .map(([key, posCount]) => {
+      const ac = aircraftData[key];
+      return {
+        key,
+        label:    acLabel(ac),
+        gsId:     ac.gs_id,
+        time:     ac.last_seen || Math.floor(Date.now() / 1000),
+        posCount,
+      };
+    });
+
+  let html = '<div class="map-history"><div class="map-history__title">Top Positions</div>';
+  if (entries.length === 0) {
     html += '<div class="map-history__empty">No positions yet</div>';
   } else {
-    for (const entry of posHistory) {
-      // Prefer the live gs_id from aircraftData so the dot colour always
-      // matches the map marker even when the history entry was first created
-      // before gs_id was known (e.g. on the initial /aircraft page-load fetch).
-      const liveGsId  = (aircraftData[entry.key] || {}).gs_id || entry.gsId;
-      const colour    = gsColorFor(liveGsId);
+    for (const entry of entries) {
+      const colour    = gsColorFor(entry.gsId);
       const hasMarker = !!aircraftMarkers[entry.key];
       const clickable = hasMarker ? ' map-history__row--clickable' : '';
       html += `<div class="map-history__row${clickable}" data-key="${esc(entry.key)}">` +
@@ -1511,6 +1503,202 @@ function placeReceiverMarker(info) {
   updateArcLayer();
 }
 
+// ---- Aircraft detail side panel -------------------------------------------
+
+// In-memory caches keyed by ICAO hex — mirrors the Go-side LRU so the browser
+// doesn't re-fetch on every selection within the same page session.
+const _hexdbCache        = new Map(); // icao → hexdb JSON object (or null on 404)
+const _planespottersCache = new Map(); // icao[:reg] → first photo object (or null)
+
+/**
+ * Populate and open the side panel for the given aircraft object.
+ * Called from selectAircraft() after the track fetch is initiated.
+ */
+function openAircraftPanel(ac) {
+  const panel = document.getElementById('ac-panel');
+  if (!panel) return;
+
+  // ---- Populate static fields immediately from aircraftData ----------------
+  const label = [ac.flight, ac.reg, ac.icao].filter(Boolean).join(' / ') || ac.key;
+  document.getElementById('ac-panel-callsign').textContent = label.toUpperCase();
+
+  // Subtitle: last seen time
+  const subEl = document.getElementById('ac-panel-subtitle');
+  if (ac.last_seen) {
+    const d = new Date(ac.last_seen * 1000);
+    subEl.textContent = 'Last seen ' + d.toUTCString().replace(/.*(\d{2}:\d{2}:\d{2}).*/, '$1') + ' UTC';
+  } else {
+    subEl.textContent = '';
+  }
+
+  // Helper: set a <dd> and hide the dt+dd pair if value is empty
+  function setField(id, value) {
+    const dd = document.getElementById(id);
+    if (!dd) return;
+    const dt = dd.previousElementSibling;
+    if (value) {
+      dd.textContent = value;
+      dd.classList.remove('ac-panel--hidden');
+      if (dt) dt.classList.remove('ac-panel--hidden');
+    } else {
+      dd.textContent = '—';
+      dd.classList.add('ac-panel--hidden');
+      if (dt) dt.classList.add('ac-panel--hidden');
+    }
+  }
+
+  setField('ac-panel-icao',    ac.icao   || '');
+  setField('ac-panel-reg',     ac.reg    || '');
+  setField('ac-panel-flight',  ac.flight || '');
+  setField('ac-panel-freq',    ac.freq_khz ? ac.freq_khz.toLocaleString() + ' kHz' : '');
+
+  const gsName = ac.gs_id && typeof gsNames !== 'undefined' && gsNames[ac.gs_id]
+    ? gsNames[ac.gs_id]
+    : (ac.gs_id ? `GS ${ac.gs_id}` : '');
+  setField('ac-panel-gs', gsName);
+
+  const sigStr = ac.sig_level != null && ac.sig_level !== 0
+    ? ac.sig_level.toFixed(1) + ' dBFS'
+    : '';
+  setField('ac-panel-signal', sigStr);
+
+  setField('ac-panel-alt',
+    ac.alt_valid && ac.alt_ft ? Math.round(ac.alt_ft).toLocaleString() + ' ft' : '');
+
+  let spdStr = '';
+  if (ac.gnd_spd_kts) {
+    spdStr = Math.round(ac.gnd_spd_kts) + ' kts';
+    if (ac.vspd_ftmin) {
+      spdStr += ' ' + (ac.vspd_ftmin > 0 ? '↑' : '↓') +
+                Math.abs(Math.round(ac.vspd_ftmin)) + ' ft/min';
+    }
+  }
+  setField('ac-panel-speed', spdStr);
+
+  setField('ac-panel-track',
+    ac.true_trk_valid && ac.true_trk_deg != null
+      ? ac.true_trk_deg.toFixed(1) + '° (' + bearingToCardinal(ac.true_trk_deg) + ')'
+      : '');
+
+  const distKm = ac.lat && ac.lon ? distanceToReceiverKm(ac.lat, ac.lon) : null;
+  setField('ac-panel-dist', distKm !== null ? fmtKm(distKm) : '');
+
+  const trackedKm = ac.tracked_km || 0;
+  setField('ac-panel-tracked',
+    trackedKm > 0
+      ? (trackedKm >= 1000 ? (trackedKm / 1000).toFixed(1) + 'k km' : fmtKm(trackedKm))
+      : '');
+
+  setField('ac-panel-msgs', ac.msg_count ? ac.msg_count.toLocaleString() : '');
+
+  setField('ac-panel-lastseen',
+    ac.last_seen
+      ? (() => {
+          const d = new Date(ac.last_seen * 1000);
+          return d.toUTCString().replace(/.*(\d{2}:\d{2}:\d{2}).*/, '$1') + ' UTC';
+        })()
+      : '');
+
+  // Reset enrichment / photo sections while async fetches run
+  const enrichEl = document.getElementById('ac-panel-enrich');
+  if (enrichEl) enrichEl.hidden = true;
+  const photoWrap = document.getElementById('ac-panel-photo-wrap');
+  if (photoWrap) photoWrap.hidden = true;
+  const skeleton = document.getElementById('ac-panel-photo-skeleton');
+  if (skeleton) skeleton.hidden = false;
+
+  // Slide the panel open
+  panel.classList.add('ac-panel--open');
+
+  // ---- Async enrichment: Hexdb + Planespotters in parallel -----------------
+  if (!ac.icao) {
+    // No ICAO hex — hide skeleton, nothing to fetch
+    if (skeleton) skeleton.hidden = true;
+    return;
+  }
+
+  const icao = ac.icao.toUpperCase();
+  const reg  = ac.reg || '';
+  const psKey = reg ? icao + ':' + reg : icao;
+
+  // Fetch Hexdb (operator / full type)
+  const hexdbPromise = _hexdbCache.has(icao)
+    ? Promise.resolve(_hexdbCache.get(icao))
+    : fetch('/proxy/hexdb/' + icao)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { _hexdbCache.set(icao, data); return data; })
+        .catch(() => { _hexdbCache.set(icao, null); return null; });
+
+  // Fetch Planespotters (photo)
+  const psURL = '/proxy/planespotters/' + icao + (reg ? '?reg=' + encodeURIComponent(reg) : '');
+  const psPromise = _planespottersCache.has(psKey)
+    ? Promise.resolve(_planespottersCache.get(psKey))
+    : fetch(psURL)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          const photo = data && Array.isArray(data.photos) && data.photos.length > 0
+            ? data.photos[0] : null;
+          _planespottersCache.set(psKey, photo);
+          return photo;
+        })
+        .catch(() => { _planespottersCache.set(psKey, null); return null; });
+
+  // Apply results as they arrive — don't wait for both
+  hexdbPromise.then(data => {
+    // Guard: panel may have been closed or switched to a different aircraft
+    if (!panel.classList.contains('ac-panel--open')) return;
+    if (!data) return;
+    const operator = data.Operator || data.RegisteredOwners || '';
+    const type     = data.Type || '';
+    if (operator || type) {
+      const opEl   = document.getElementById('ac-panel-operator');
+      const typeEl = document.getElementById('ac-panel-type');
+      if (opEl)   opEl.textContent   = operator;
+      if (typeEl) typeEl.textContent = type;
+      if (enrichEl) enrichEl.hidden = false;
+      // Also update subtitle with operator if we have it
+      if (operator && subEl) {
+        const existing = subEl.textContent;
+        subEl.textContent = operator + (existing ? ' · ' + existing : '');
+      }
+    }
+  });
+
+  psPromise.then(photo => {
+    if (!panel.classList.contains('ac-panel--open')) return;
+    if (skeleton) skeleton.hidden = true;
+    if (!photo) return;
+    const imgEl    = document.getElementById('ac-panel-photo');
+    const linkEl   = document.getElementById('ac-panel-photo-link');
+    const creditEl = document.getElementById('ac-panel-photo-credit');
+    if (!imgEl || !photoWrap) return;
+    const src = (photo.thumbnail_large && photo.thumbnail_large.src) ||
+                (photo.thumbnail && photo.thumbnail.src) || '';
+    if (!src) return;
+    imgEl.src = src;
+    imgEl.onload = () => { photoWrap.hidden = false; };
+    imgEl.onerror = () => { /* leave hidden */ };
+    if (linkEl && photo.link) linkEl.href = photo.link;
+    if (creditEl) {
+      creditEl.textContent = photo.photographer
+        ? '📷 ' + photo.photographer + ' · Planespotters.net'
+        : 'Planespotters.net';
+    }
+  });
+}
+
+/** Close and reset the aircraft detail side panel. */
+function closeAircraftPanel() {
+  const panel = document.getElementById('ac-panel');
+  if (panel) panel.classList.remove('ac-panel--open');
+}
+
+/** Wire up the close button — called once from initMap(). */
+function initAircraftPanel() {
+  const btn = document.getElementById('ac-panel-close');
+  if (btn) btn.addEventListener('click', () => deselectAircraft());
+}
+
 function initMap() {
   hfdlMap = L.map('map', {
     center: [30, 0],
@@ -1543,6 +1731,7 @@ function initMap() {
   setInterval(() => { if (showPropagationLayer) updatePropagationLayer(); }, 30_000);
   initLayerControl();
   initMapSearch();
+  initAircraftPanel();
 
   // Live-activity overlay — topleft, below the recent-positions history panel.
   // Created here so Leaflet inserts it after historyControl (which is added
@@ -1778,6 +1967,9 @@ function upsertMarker(ac, fromSSE = false) {
         hfdlMap.panTo(newLatLng);
       }
     }
+    // Refresh the side panel data fields (signal, alt, speed, etc.) on live updates.
+    // Don't re-fetch photos/enrichment — those are already cached.
+    if (typeof openAircraftPanel === 'function') openAircraftPanel(ac);
   }
 
   renderLegend();
@@ -1795,6 +1987,10 @@ function selectAircraft(key, fitBounds = false) {
   // Clear any GS selection first (mutually exclusive)
   selectedGS  = null;
   selectedKey = key;
+
+  // Open the detail side panel immediately with data we already have
+  const ac = aircraftData[key];
+  if (ac) openAircraftPanel(ac);
 
   // Redraw all markers to apply dim/highlight
   for (const [k, marker] of Object.entries(aircraftMarkers)) {
@@ -1901,6 +2097,9 @@ function deselectAircraft() {
     trackDotLayer.remove();
     trackDotLayer = null;
   }
+
+  // Close the detail side panel
+  closeAircraftPanel();
 
   // Redraw all markers without dim
   for (const [k, marker] of Object.entries(aircraftMarkers)) {

@@ -2744,3 +2744,197 @@ td.empty {
 .planes-activity-bar:hover {
   opacity: 0.75;
 }
+
+/* -----------------------------------------------------------------------
+   Aircraft detail side panel
+   ----------------------------------------------------------------------- */
+
+.ac-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  pointer-events: none;
+}
+
+.ac-panel--open {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+/* Header */
+.ac-panel__header {
+  padding: 12px 12px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.ac-panel__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ac-panel__callsign {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: var(--font-mono);
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ac-panel__close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.ac-panel__close:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.ac-panel__subtitle {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+  min-height: 14px;
+}
+
+/* Photo */
+.ac-panel__photo-wrap {
+  flex-shrink: 0;
+  position: relative;
+}
+
+.ac-panel__photo-link {
+  display: block;
+}
+
+.ac-panel__photo {
+  width: 100%;
+  display: block;
+  object-fit: cover;
+  max-height: 160px;
+}
+
+.ac-panel__photo-credit {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,0.6);
+  color: #c9d1d9;
+  font-size: 10px;
+  padding: 3px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Photo loading skeleton */
+.ac-panel__photo-skeleton {
+  width: 100%;
+  height: 120px;
+  background: linear-gradient(90deg, var(--border) 25%, #21262d 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: ac-panel-shimmer 1.4s infinite;
+  flex-shrink: 0;
+}
+
+.ac-panel__photo-skeleton[hidden] {
+  display: none;
+}
+
+@keyframes ac-panel-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Enrichment row (operator / type from Hexdb) */
+.ac-panel__enrich {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.ac-panel__enrich[hidden] {
+  display: none;
+}
+
+.ac-panel__enrich-operator {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ac-panel__enrich-type {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Data grid */
+.ac-panel__data {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0;
+  padding: 8px 0;
+  flex-shrink: 0;
+}
+
+.ac-panel__data dt,
+.ac-panel__data dd {
+  padding: 3px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-bottom: 1px solid rgba(48,54,61,0.5);
+}
+
+.ac-panel__data dt {
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ac-panel__data dd {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Hide rows whose dd is "—" (empty/unknown) */
+.ac-panel__data dt.ac-panel--hidden,
+.ac-panel__data dd.ac-panel--hidden {
+  display: none;
+}

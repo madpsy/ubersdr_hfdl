@@ -53,6 +53,50 @@
         <button id="map-ra-alert-close" title="Dismiss">✕</button>
         <div id="map-ra-alert-body"></div>
       </div>
+
+      <!-- Aircraft detail side panel — shown when a plane is selected on the map -->
+      <div id="ac-panel" class="ac-panel" aria-label="Aircraft details">
+        <div class="ac-panel__header">
+          <div class="ac-panel__title-row">
+            <span class="ac-panel__callsign" id="ac-panel-callsign">—</span>
+            <button class="ac-panel__close" id="ac-panel-close" title="Close">✕</button>
+          </div>
+          <div class="ac-panel__subtitle" id="ac-panel-subtitle"></div>
+        </div>
+
+        <!-- Photo section — hidden until Planespotters responds -->
+        <div class="ac-panel__photo-wrap" id="ac-panel-photo-wrap" hidden>
+          <a class="ac-panel__photo-link" id="ac-panel-photo-link" target="_blank" rel="noopener">
+            <img class="ac-panel__photo" id="ac-panel-photo" alt="Aircraft photo" />
+          </a>
+          <div class="ac-panel__photo-credit" id="ac-panel-photo-credit"></div>
+        </div>
+        <!-- Photo loading skeleton -->
+        <div class="ac-panel__photo-skeleton" id="ac-panel-photo-skeleton"></div>
+
+        <!-- Enrichment row (Hexdb operator / type) -->
+        <div class="ac-panel__enrich" id="ac-panel-enrich" hidden>
+          <span class="ac-panel__enrich-operator" id="ac-panel-operator"></span>
+          <span class="ac-panel__enrich-type" id="ac-panel-type"></span>
+        </div>
+
+        <!-- Core HFDL data grid -->
+        <dl class="ac-panel__data">
+          <dt>ICAO</dt>       <dd id="ac-panel-icao">—</dd>
+          <dt>Reg</dt>        <dd id="ac-panel-reg">—</dd>
+          <dt>Flight</dt>     <dd id="ac-panel-flight">—</dd>
+          <dt>Freq</dt>       <dd id="ac-panel-freq">—</dd>
+          <dt>Via GS</dt>     <dd id="ac-panel-gs">—</dd>
+          <dt>Signal</dt>     <dd id="ac-panel-signal">—</dd>
+          <dt>Altitude</dt>   <dd id="ac-panel-alt">—</dd>
+          <dt>Speed</dt>      <dd id="ac-panel-speed">—</dd>
+          <dt>Track</dt>      <dd id="ac-panel-track">—</dd>
+          <dt>Distance</dt>   <dd id="ac-panel-dist">—</dd>
+          <dt>Tracked</dt>    <dd id="ac-panel-tracked">—</dd>
+          <dt>Messages</dt>   <dd id="ac-panel-msgs">—</dd>
+          <dt>Last seen</dt>  <dd id="ac-panel-lastseen">—</dd>
+        </dl>
+      </div>
     </section>
 
     <!-- Frequency stats tab -->
@@ -314,7 +358,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
   <script src="app.js?v=3"></script>
-  <script src="map.js?v=2"></script>
+  <script src="map.js?v=3"></script>
   <script src="network.js?v=1"></script>
   <script src="propagation.js?v=1"></script>
   <script src="linkquality.js?v=1"></script>
