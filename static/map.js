@@ -55,8 +55,9 @@ function gsColorFor(gsId) {
 }
 
 // ---- Recent positions history ----------------------------------------------
-const MAX_HISTORY = 10;
-const posHistory  = []; // [{key, label, gsId, time, posCount}] newest-first
+const MAX_HISTORY   = 10;
+const posHistory    = []; // [{key, label, gsId, time, posCount}] newest-first, capped at MAX_HISTORY for display
+const posCountStore = {}; // key → posCount for ALL aircraft (never evicted)
 
 let historyControl = null;
 let historyTickTimer = null;
@@ -76,9 +77,13 @@ function timeAgo(unixSec) {
 }
 
 function pushHistory(ac) {
+  // Increment the persistent per-aircraft position counter (survives eviction
+  // from the display list when more than MAX_HISTORY aircraft are active).
+  posCountStore[ac.key] = (posCountStore[ac.key] || 0) + 1;
+  const posCount = posCountStore[ac.key];
+
   // Remove any existing entry for this aircraft so it moves to the top
   const idx = posHistory.findIndex(e => e.key === ac.key);
-  const prevCount = idx !== -1 ? posHistory[idx].posCount : 0;
   if (idx !== -1) posHistory.splice(idx, 1);
   // Prefer gs_id from the live aircraftData store (populated by upsertMarker)
   // over the value on the raw ac object, which may be absent in the initial
@@ -89,8 +94,9 @@ function pushHistory(ac) {
     label: acLabel(ac),
     gsId: liveGsId,
     time: ac.last_seen || Math.floor(Date.now() / 1000),
-    posCount: prevCount + 1,
+    posCount,
   });
+  // Cap the display list at MAX_HISTORY — posCountStore retains counts for all aircraft.
   if (posHistory.length > MAX_HISTORY) posHistory.length = MAX_HISTORY;
   renderHistory();
 }
@@ -190,6 +196,24 @@ function renderHistory() {
 // ---- Legend control --------------------------------------------------------
 let legendControl = null;
 
+// gs_id → setTimeout handle — cleared when the flash expires
+const _gsFlashTimers = {};
+
+/**
+ * Briefly mark a GS as "active" in the legend (bold label) for 1000 ms.
+ * Called from app.js whenever a message arrives with that GS as source.
+ */
+function flashGSLegend(gsId) {
+  if (!gsId) return;
+  // If a timer is already running, clear it so the 1 s window resets
+  if (_gsFlashTimers[gsId]) clearTimeout(_gsFlashTimers[gsId]);
+  _gsFlashTimers[gsId] = setTimeout(() => {
+    delete _gsFlashTimers[gsId];
+    renderLegend(); // re-render to remove the bold class
+  }, 1000);
+  renderLegend(); // re-render immediately to add the bold class
+}
+
 function renderLegend() {
   if (!hfdlMap) return;
 
@@ -212,8 +236,10 @@ function renderLegend() {
         ? gsNames[gsId]
         : `GS ${gsId}`;
       const isSelected = selectedGS === gsId;
-      const selCls = isSelected ? ' map-legend__row--selected' : '';
-      html += `<div class="map-legend__row map-legend__row--clickable${selCls}" data-gs-id="${gsId}">` +
+      const isFlashing = !!_gsFlashTimers[gsId];
+      const selCls     = isSelected ? ' map-legend__row--selected' : '';
+      const flashCls   = isFlashing ? ' map-legend__row--active'   : '';
+      html += `<div class="map-legend__row map-legend__row--clickable${selCls}${flashCls}" data-gs-id="${gsId}">` +
               `<span class="map-legend__swatch" style="background:${colour}"></span>` +
               `<span class="map-legend__label">${esc(name)}</span>` +
               `</div>`;
@@ -1667,11 +1693,13 @@ function upsertMarker(ac, fromSSE = false) {
 
   const isNew = !aircraftMarkers[ac.key];
 
-  // Show bottom-centre notification for SSE-driven events only,
-  // and only show "Updated" when the position actually moved.
+  // Show bottom-centre notification for SSE-driven events only.
+  // Show "New" on first appearance, "Updated" only when the position moved AND
+  // the aircraft has been seen more than once (posCount > 1 in the persistent store).
   if (fromSSE && (isNew || posChanged)) {
     const label = acLabel(ac);
-    showMapNotification(isNew ? 'new' : 'update', label);
+    const isFirstPos = (posCountStore[ac.key] || 0) <= 1;
+    showMapNotification(isNew || isFirstPos ? 'new' : 'update', label);
   }
 
   if (!isNew) {

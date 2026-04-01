@@ -707,6 +707,11 @@ td.empty {
   background: rgba(255, 255, 255, 0.12);
 }
 
+.map-legend__row--active .map-legend__label {
+  font-weight: 700;
+  color: #fff;
+}
+
 .map-legend__swatch {
   display: inline-block;
   width: 12px;

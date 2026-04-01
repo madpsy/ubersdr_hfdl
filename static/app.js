@@ -1052,6 +1052,10 @@ function handleSSEEvent(raw) {
     const lbl = document.getElementById('total-label');
     const cur = parseInt(lbl.textContent.replace(/\D/g, ''), 10) || 0;
     lbl.textContent = 'Total messages: ' + (cur + 1).toLocaleString();
+    // Flash the GS legend row when this message has a ground station as source
+    if (data.src_type === 'Ground station' && data.src_id) {
+      if (typeof flashGSLegend === 'function') flashGSLegend(data.src_id);
+    }
     // Mark this frequency as active immediately and re-render instances chips
     if (data.freq_khz) {
       activeFreqsKHz.add(data.freq_khz);
