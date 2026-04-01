@@ -1507,8 +1507,8 @@ function placeReceiverMarker(info) {
 
 // In-memory caches keyed by ICAO hex — mirrors the Go-side LRU so the browser
 // doesn't re-fetch on every selection within the same page session.
-const _hexdbCache        = new Map(); // icao → hexdb JSON object (or null on 404)
-const _planespottersCache = new Map(); // icao[:reg] → first photo object (or null)
+const _aircraftCache = new Map(); // icao → enrichment object (or null)
+const _photoCache    = new Map(); // icao[:reg] → first photo object (or null)
 
 /**
  * Populate and open the side panel for the given aircraft object.
@@ -1610,61 +1610,80 @@ function openAircraftPanel(ac) {
   // Slide the panel open
   panel.classList.add('ac-panel--open');
 
-  // ---- Async enrichment: Hexdb + Planespotters in parallel -----------------
-  if (!ac.icao) {
-    // No ICAO hex — hide skeleton, nothing to fetch
+  // ---- Async enrichment -------------------------------------------------------
+  // ac.icao is the ICAO hex when decoded from the HFDL frame.
+  // ac.key is "ICAO hex if known, else registration/flight" — use it as a
+  // fallback when ac.icao is absent but the key looks like a 6-hex ICAO.
+  const _hexIcao = ac.icao ||
+    (/^[0-9A-Fa-f]{6}$/.test(ac.key || '') ? ac.key : null);
+
+  if (!_hexIcao) {
+    // No ICAO hex available — hide skeleton, nothing to fetch
     if (skeleton) skeleton.hidden = true;
     return;
   }
 
-  const icao = ac.icao.toUpperCase();
-  const reg  = ac.reg || '';
-  const psKey = reg ? icao + ':' + reg : icao;
+  const icao   = _hexIcao.toUpperCase();
+  const reg    = ac.reg || '';
+  const psKey  = reg ? icao + ':' + reg : icao;
 
-  // Fetch Hexdb (operator / full type)
-  const hexdbPromise = _hexdbCache.has(icao)
-    ? Promise.resolve(_hexdbCache.get(icao))
-    : fetch('/proxy/hexdb/' + icao)
+  // Helper: format a route airport object returned by /aircraft/{icao}
+  function fmtAirport(ap) {
+    if (!ap) return '';
+    const code = ap.iata || ap.icao || '';
+    const city = ap.city || ap.name || '';
+    return code && city ? code + ' – ' + city : code || city;
+  }
+
+  // Fetch unified aircraft enrichment (adsbdb primary, hexdb fallback — done server-side)
+  const acPromise = _aircraftCache.has(icao)
+    ? Promise.resolve(_aircraftCache.get(icao))
+    : fetch('/aircraft/' + icao)
         .then(r => r.ok ? r.json() : null)
-        .then(data => { _hexdbCache.set(icao, data); return data; })
-        .catch(() => { _hexdbCache.set(icao, null); return null; });
+        .then(data => { _aircraftCache.set(icao, data); return data; })
+        .catch(() => { _aircraftCache.set(icao, null); return null; });
 
-  // Fetch Planespotters (photo)
-  const psURL = '/proxy/planespotters/' + icao + (reg ? '?reg=' + encodeURIComponent(reg) : '');
-  const psPromise = _planespottersCache.has(psKey)
-    ? Promise.resolve(_planespottersCache.get(psKey))
-    : fetch(psURL)
+  // Fetch Planespotters photo
+  const photoURL = '/aircraft/' + icao + '/photo' + (reg ? '?reg=' + encodeURIComponent(reg) : '');
+  const photoPromise = _photoCache.has(psKey)
+    ? Promise.resolve(_photoCache.get(psKey))
+    : fetch(photoURL)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           const photo = data && Array.isArray(data.photos) && data.photos.length > 0
             ? data.photos[0] : null;
-          _planespottersCache.set(psKey, photo);
+          _photoCache.set(psKey, photo);
           return photo;
         })
-        .catch(() => { _planespottersCache.set(psKey, null); return null; });
+        .catch(() => { _photoCache.set(psKey, null); return null; });
 
-  // Apply results as they arrive — don't wait for both
-  hexdbPromise.then(data => {
-    // Guard: panel may have been closed or switched to a different aircraft
+  // Apply enrichment result
+  acPromise.then(data => {
     if (!panel.classList.contains('ac-panel--open')) return;
     if (!data) return;
-    const operator = data.Operator || data.RegisteredOwners || '';
-    const type     = data.Type || '';
+    const operator = data.operator || '';
+    const type     = data.type     || '';
     if (operator || type) {
       const opEl   = document.getElementById('ac-panel-operator');
       const typeEl = document.getElementById('ac-panel-type');
       if (opEl)   opEl.textContent   = operator;
       if (typeEl) typeEl.textContent = type;
       if (enrichEl) enrichEl.hidden = false;
-      // Also update subtitle with operator if we have it
       if (operator && subEl) {
         const existing = subEl.textContent;
         subEl.textContent = operator + (existing ? ' · ' + existing : '');
       }
     }
+    setField('ac-panel-iata-flight',  data.iata_flight   || '');
+    setField('ac-panel-manufacturer', data.manufacturer  || '');
+    setField('ac-panel-icao-type',    data.icao_type     || '');
+    setField('ac-panel-country',      data.country       || '');
+    setField('ac-panel-origin',       fmtAirport(data.origin));
+    setField('ac-panel-dest',         fmtAirport(data.destination));
   });
 
-  psPromise.then(photo => {
+  // Apply photo result
+  photoPromise.then(photo => {
     if (!panel.classList.contains('ac-panel--open')) return;
     if (skeleton) skeleton.hidden = true;
     if (!photo) return;
