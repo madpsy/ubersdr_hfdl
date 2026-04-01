@@ -1743,15 +1743,24 @@ function upsertMarker(ac, fromSSE = false) {
     }
   }
 
-  // If this is the selected aircraft, extend the live track polyline.
-  // Cap at MAX_TRACK_POINTS to prevent unbounded memory growth.
-  // Also keep the colour in sync with the aircraft's current GS colour.
-  if (selected && trackPolyline) {
-    const latlngs = trackPolyline.getLatLngs();
-    latlngs.push(L.latLng(ac.lat, ac.lon));
-    if (latlngs.length > MAX_TRACK_POINTS) latlngs.splice(0, latlngs.length - MAX_TRACK_POINTS);
-    trackPolyline.setLatLngs(latlngs);
-    trackPolyline.setStyle({ color: gsColorFor(ac.gs_id) });
+  // If this is the selected aircraft, extend the live track polyline and
+  // pan the map if the new position has drifted outside the current viewport.
+  if (selected) {
+    if (trackPolyline) {
+      const latlngs = trackPolyline.getLatLngs();
+      latlngs.push(L.latLng(ac.lat, ac.lon));
+      if (latlngs.length > MAX_TRACK_POINTS) latlngs.splice(0, latlngs.length - MAX_TRACK_POINTS);
+      trackPolyline.setLatLngs(latlngs);
+      trackPolyline.setStyle({ color: gsColorFor(ac.gs_id) });
+    }
+    // Pan to keep the selected aircraft in view — only if it has moved outside
+    // the current map bounds (avoids jarring movement when it's already visible).
+    if (hfdlMap && posChanged) {
+      const newLatLng = L.latLng(ac.lat, ac.lon);
+      if (!hfdlMap.getBounds().contains(newLatLng)) {
+        hfdlMap.panTo(newLatLng);
+      }
+    }
   }
 
   renderLegend();
