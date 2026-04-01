@@ -80,10 +80,14 @@ function pushHistory(ac) {
   const idx = posHistory.findIndex(e => e.key === ac.key);
   const prevCount = idx !== -1 ? posHistory[idx].posCount : 0;
   if (idx !== -1) posHistory.splice(idx, 1);
+  // Prefer gs_id from the live aircraftData store (populated by upsertMarker)
+  // over the value on the raw ac object, which may be absent in the initial
+  // /aircraft page-load snapshot but present after the first SSE position event.
+  const liveGsId = (aircraftData[ac.key] || {}).gs_id || ac.gs_id;
   posHistory.unshift({
     key: ac.key,
     label: acLabel(ac),
-    gsId: ac.gs_id,
+    gsId: liveGsId,
     time: ac.last_seen || Math.floor(Date.now() / 1000),
     posCount: prevCount + 1,
   });
@@ -99,7 +103,11 @@ function renderHistory() {
     html += '<div class="map-history__empty">No positions yet</div>';
   } else {
     for (const entry of posHistory) {
-      const colour    = gsColorFor(entry.gsId);
+      // Prefer the live gs_id from aircraftData so the dot colour always
+      // matches the map marker even when the history entry was first created
+      // before gs_id was known (e.g. on the initial /aircraft page-load fetch).
+      const liveGsId  = (aircraftData[entry.key] || {}).gs_id || entry.gsId;
+      const colour    = gsColorFor(liveGsId);
       const hasMarker = !!aircraftMarkers[entry.key];
       const clickable = hasMarker ? ' map-history__row--clickable' : '';
       html += `<div class="map-history__row${clickable}" data-key="${esc(entry.key)}">` +
