@@ -242,12 +242,16 @@ type hfdlMessage struct {
 					Label    string `json:"label"`
 					Sublabel string `json:"sublabel"`
 					MsgText  string `json:"msg_text"`
-					// Phase 3c: media-adv current_link
+					// Phase 3c: media-adv current_link and links_avail
 					MediaAdv *struct {
 						CurrentLink *struct {
 							Code string `json:"code"`
 							Name string `json:"name"`
 						} `json:"current_link"`
+						LinksAvail []struct {
+							Code string `json:"code"`
+							Name string `json:"name"`
+						} `json:"links_avail"`
 					} `json:"media-adv"`
 					// Section 2.6.4: ADS-C position contracts via libacars
 					ARINC622 *struct {
@@ -348,6 +352,13 @@ type SigBucket struct {
 const sigBucketSecs = 1800 // 30 minutes
 const maxSigBuckets = 96   // 48 hours of history
 
+// AircraftBucket holds the count of unique aircraft seen in one 30-minute window.
+type AircraftBucket struct {
+	T     int64           `json:"t"` // unix seconds of bucket start (floor to 1800s)
+	Count int             `json:"n"` // unique aircraft keys seen this window
+	keys  map[string]bool // not serialised — used for deduplication
+}
+
 // GSFreqStats holds per-ground-station statistics on a specific frequency.
 type GSFreqStats struct {
 	GSID        int          `json:"gs_id"`
@@ -429,8 +440,9 @@ type AircraftState struct {
 	MPDUTx    int     `json:"mpdu_tx,omitempty"`
 	MPDUErr   int     `json:"mpdu_err,omitempty"`
 	ErrorRate float64 `json:"error_rate,omitempty"` // 0–100 %
-	// Phase 3c: current datalink type from media-adv
-	CurrentLink string `json:"current_link,omitempty"` // e.g. "HF", "VHF", "SATCOM"
+	// Phase 3c: current datalink type and available links from media-adv
+	CurrentLink    string   `json:"current_link,omitempty"`    // e.g. "HF", "VHF", "SATCOM"
+	AvailableLinks []string `json:"available_links,omitempty"` // e.g. ["HF", "SATCOM"]
 	// Phase 3d: aircraft-reported UTC time as "HH:MM:SS UTC"
 	AircraftTime string `json:"aircraft_time,omitempty"`
 	// Section 2.6.4: ADS-C altitude from basic_report
@@ -485,15 +497,16 @@ type gsEvent struct {
 
 // StatsSnapshot is the full stats payload served at /stats.
 type StatsSnapshot struct {
-	TotalMessages   int64           `json:"total_messages"`
-	StartTime       int64           `json:"start_time"`
-	UptimeSecs      int64           `json:"uptime_secs"`
-	Frequencies     []*FreqStats    `json:"frequencies"`
-	Recent          []RecentMessage `json:"recent"`
-	RecentEvents    []gsEvent       `json:"recent_events"`              // ring buffer of gs_event entries
-	GroundStations  map[int]string  `json:"ground_stations"`            // gs_id → location name
-	DumphfdlVer     string          `json:"dumphfdl_ver,omitempty"`     // Phase 1d
-	SystableVersion int             `json:"systable_version,omitempty"` // Section 2.7
+	TotalMessages   int64            `json:"total_messages"`
+	StartTime       int64            `json:"start_time"`
+	UptimeSecs      int64            `json:"uptime_secs"`
+	Frequencies     []*FreqStats     `json:"frequencies"`
+	Recent          []RecentMessage  `json:"recent"`
+	RecentEvents    []gsEvent        `json:"recent_events"`              // ring buffer of gs_event entries
+	GroundStations  map[int]string   `json:"ground_stations"`            // gs_id → location name
+	DumphfdlVer     string           `json:"dumphfdl_ver,omitempty"`     // Phase 1d
+	SystableVersion int              `json:"systable_version,omitempty"` // Section 2.7
+	AircraftHistory []AircraftBucket `json:"aircraft_history,omitempty"` // 30-min unique-aircraft buckets
 }
 
 // sseEvent wraps a typed SSE payload so the browser can distinguish
@@ -551,6 +564,8 @@ type statsStore struct {
 	propagation map[string]*PropPath
 	// recentEvents: ring buffer of gs_event entries for page-load seeding
 	recentEvents []gsEvent
+	// acBuckets: 30-min unique-aircraft count history (same cadence as SigBucket)
+	acBuckets []AircraftBucket
 	// Weather: ring buffer of label H1 / sublabel WX messages
 	weatherMessages []WeatherMessage
 	// Phase 1d: dumphfdl version string (set on first message received)
@@ -871,7 +886,7 @@ func (s *statsStore) ingest(line string) {
 				acKey = flight
 			}
 
-			// Increment message count for this aircraft
+			// Increment message count for this aircraft and record in activity bucket
 			if acKey != "" {
 				existing := s.aircraft[acKey]
 				if existing == nil {
@@ -879,6 +894,25 @@ func (s *statsStore) ingest(line string) {
 					s.aircraft[acKey] = existing
 				}
 				existing.MsgCount++
+				// Record this aircraft key in the current 30-min activity bucket
+				bucketStart := (now / sigBucketSecs) * sigBucketSecs
+				if n := len(s.acBuckets); n > 0 && s.acBuckets[n-1].T == bucketStart {
+					b := &s.acBuckets[n-1]
+					if !b.keys[acKey] {
+						b.keys[acKey] = true
+						b.Count++
+					}
+				} else {
+					b := AircraftBucket{
+						T:     bucketStart,
+						Count: 1,
+						keys:  map[string]bool{acKey: true},
+					}
+					s.acBuckets = append(s.acBuckets, b)
+					if len(s.acBuckets) > maxSigBuckets {
+						s.acBuckets = s.acBuckets[len(s.acBuckets)-maxSigBuckets:]
+					}
+				}
 				existing.SigLevel = h.SigLevel
 				// Update identity fields in case they're newly available
 				if icao != "" {
@@ -911,13 +945,26 @@ func (s *statsStore) ingest(line string) {
 						existing.ErrorRate = float64(err) / float64(total) * 100
 					}
 				}
-				// Phase 3c: current datalink from media-adv
+				// Phase 3c: current datalink and available links from media-adv
 				if h.LPDU.HFNPDU.ACARS != nil &&
 					h.LPDU.HFNPDU.ACARS.MediaAdv != nil &&
 					h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink != nil {
-					existing.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Code
+					existing.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Name
 					// Also populate RecentMessage for the Live Feed datalink column
-					rm.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Code
+					rm.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Name
+				}
+				if h.LPDU.HFNPDU.ACARS != nil &&
+					h.LPDU.HFNPDU.ACARS.MediaAdv != nil &&
+					len(h.LPDU.HFNPDU.ACARS.MediaAdv.LinksAvail) > 0 {
+					avail := make([]string, 0, len(h.LPDU.HFNPDU.ACARS.MediaAdv.LinksAvail))
+					for _, l := range h.LPDU.HFNPDU.ACARS.MediaAdv.LinksAvail {
+						if l.Name != "" {
+							avail = append(avail, l.Name)
+						}
+					}
+					if len(avail) > 0 {
+						existing.AvailableLinks = avail
+					}
 				}
 				// Phase 3d: aircraft-reported UTC time — format as "HH:MM:SS UTC"
 				if h.LPDU.HFNPDU.Time != nil {
@@ -1204,6 +1251,12 @@ func (s *statsStore) snapshot() StatsSnapshot {
 	recentEvts := make([]gsEvent, len(s.recentEvents))
 	copy(recentEvts, s.recentEvents)
 
+	// Copy aircraft activity buckets (omit the keys map — only T and Count are serialised)
+	acHistory := make([]AircraftBucket, len(s.acBuckets))
+	for i, b := range s.acBuckets {
+		acHistory[i] = AircraftBucket{T: b.T, Count: b.Count}
+	}
+
 	return StatsSnapshot{
 		TotalMessages:   s.total,
 		StartTime:       s.startTime.Unix(),
@@ -1214,6 +1267,7 @@ func (s *statsStore) snapshot() StatsSnapshot {
 		GroundStations:  s.gsNames,
 		DumphfdlVer:     s.dumphfdlVer,
 		SystableVersion: s.systableVersion,
+		AircraftHistory: acHistory,
 	}
 }
 
@@ -1263,20 +1317,24 @@ func (s *statsStore) propagationSnapshot() PropSnapshot {
 	return PropSnapshot{Paths: paths, ByGS: byGS, ByAircraft: byAC}
 }
 
-const aircraftMaxAgeSecs = 30 * 60 // 30 minutes
+const aircraftMaxAgeSecs = 30 * 60        // 30 minutes
+const propagationMaxAgeSecs = 3 * 60 * 60 // 3 hours
 
 // purgeStaleAircraft removes aircraft not seen in the last 30 minutes.
-// It also broadcasts a "purge" SSE event for each removed aircraft so the
+// It also purges propagation paths not seen in the last 3 hours.
+// It broadcasts a "purge" SSE event for each removed aircraft so the
 // browser can remove the marker without waiting for a page reload.
 // Call this in a goroutine; it runs until the process exits.
 func (s *statsStore) purgeStaleAircraft() {
 	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
-		cutoff := time.Now().Unix() - aircraftMaxAgeSecs
+		now := time.Now().Unix()
+		acCutoff := now - aircraftMaxAgeSecs
+		propCutoff := now - propagationMaxAgeSecs
 		s.mu.Lock()
 		for key, ac := range s.aircraft {
-			if ac.LastSeen < cutoff {
+			if ac.LastSeen < acCutoff {
 				delete(s.aircraft, key)
 				// Notify browser to remove the marker
 				if ev, err := json.Marshal(sseEvent{Type: "purge", Data: key}); err == nil {
@@ -1284,6 +1342,11 @@ func (s *statsStore) purgeStaleAircraft() {
 					s.broadcast(string(ev))
 					s.mu.Lock()
 				}
+			}
+		}
+		for key, pp := range s.propagation {
+			if pp.LastSeen < propCutoff {
+				delete(s.propagation, key)
 			}
 		}
 		s.mu.Unlock()

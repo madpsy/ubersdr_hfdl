@@ -52,10 +52,11 @@ function renderNetworkTab(networkData, gsData) {
     return;
   }
 
-  // Summary bar
+  // Summary bar — only count UTC-synced GS that are currently active (SPDU seen
+  // within the last 10 min), since stale utc_sync values are not meaningful.
   const totalGS   = sortedIds.length;
   const activeGS  = sortedIds.filter(id => stateByGS[id]?.spdu_active).length;
-  const syncedGS  = sortedIds.filter(id => stateByGS[id]?.utc_sync).length;
+  const syncedGS  = sortedIds.filter(id => stateByGS[id]?.spdu_active && stateByGS[id]?.utc_sync).length;
 
   let html = `<div class="net-summary">
     <span class="net-summary__stat net-summary__stat--active">${activeGS} / ${totalGS} GS active (SPDU)</span>
@@ -77,20 +78,29 @@ function renderNetworkTab(networkData, gsData) {
     const activeBadge = active
       ? `<span class="net-badge net-badge--active">● SPDU active</span>`
       : `<span class="net-badge net-badge--inactive">○ Not seen</span>`;
-    const syncBadge = state
-      ? (utcSync
+    // UTC sync badge: only show definitive ✓/✗ when the GS is currently active.
+    // When inactive (stale), show a neutral "unknown" badge so the user knows
+    // the value may not reflect current state.
+    let syncBadge = '';
+    if (state) {
+      if (active) {
+        syncBadge = utcSync
           ? `<span class="net-badge net-badge--sync">✓ UTC sync</span>`
-          : `<span class="net-badge net-badge--nosync">✗ No UTC sync</span>`)
-      : '';
+          : `<span class="net-badge net-badge--nosync">✗ No UTC sync</span>`;
+      } else {
+        syncBadge = `<span class="net-badge net-badge--stale">⊘ UTC sync unknown</span>`;
+      }
+    }
+    // Last-seen: show as relative age ("3h ago") so staleness is immediately obvious.
     const lastSeenStr = lastSeen
-      ? `<span class="net-last-seen">Last SPDU: ${typeof fmtDateTime === 'function' ? fmtDateTime(lastSeen) : new Date(lastSeen*1000).toUTCString()}</span>`
+      ? `<span class="net-last-seen">Last SPDU: ${netRelativeAge(lastSeen)}</span>`
       : '';
 
-    // Frequency chips — green if advertised active in SPDU.
-    // Primary: match by slot ID (timeslot field) — always available.
-    // Fallback: match by freq_khz — only when system table is loaded.
-    const slotSet = activeSlotByGS[gsId] || new Set();
-    const kHzSet  = activeKHzByGS[gsId]  || new Set();
+    // Frequency chips — only highlight green when the GS is currently active.
+    // If the GS is inactive (stale SPDU data), render all chips grey to avoid
+    // implying those frequencies are currently in use.
+    const slotSet = active ? (activeSlotByGS[gsId] || new Set()) : new Set();
+    const kHzSet  = active ? (activeKHzByGS[gsId]  || new Set()) : new Set();
     let freqChips = '';
     if (configFreqs.length > 0) {
       freqChips = configFreqs.map(f => {
@@ -100,8 +110,9 @@ function renderNetworkTab(networkData, gsData) {
         const cls = isActive ? 'net-freq net-freq--active' : 'net-freq';
         return `<span class="${cls}">${f.freq_khz.toLocaleString()}<span class="net-slot">T${f.timeslot}</span></span>`;
       }).join('');
-    } else if (state && state.active_freqs_khz && state.active_freqs_khz.length > 0) {
-      // GS seen in SPDU but not in our frequency list — show what SPDU advertises
+    } else if (active && state && state.active_freqs_khz && state.active_freqs_khz.length > 0) {
+      // GS seen in SPDU but not in our frequency list — show what SPDU advertises.
+      // Only highlight when active; if stale, fall through to "no frequency data".
       freqChips = state.active_freqs_khz.map(khz =>
         `<span class="net-freq net-freq--active">${khz.toLocaleString()}</span>`
       ).join('');
@@ -143,4 +154,14 @@ function loadNetworkTab() {
 function escNet(str) {
   if (!str) return '';
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// netRelativeAge returns a human-readable relative age string for a unix
+// timestamp, e.g. "just now", "4m ago", "2h ago", "3d ago".
+function netRelativeAge(unixSec) {
+  const diffSec = Math.floor(Date.now() / 1000) - unixSec;
+  if (diffSec < 60)  return 'just now';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  return `${Math.floor(diffSec / 86400)}d ago`;
 }

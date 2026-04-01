@@ -934,6 +934,7 @@ function loadStats() {
       }
 
       renderFreqTable(data.frequencies);
+      if (data.aircraft_history) renderPlanesActivityChart(data.aircraft_history);
 
       // Build heardFreqsByGS from per-GS stats on each frequency.
       // activeFreqsKHz is only ever added to (never reset) so that frequencies
@@ -1141,6 +1142,47 @@ function startPeriodicRefresh(intervalMs) {
   }, intervalMs);
 }
 
+// ---- Planes activity chart -------------------------------------------------
+
+function renderPlanesActivityChart(buckets) {
+  const container = document.getElementById('planes-activity-chart');
+  if (!container) return;
+
+  if (!Array.isArray(buckets) || buckets.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const maxCount = Math.max(...buckets.map(b => b.n));
+  if (maxCount === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  // Build bars oldest-left → newest-right
+  const bars = buckets.map(b => {
+    const heightPct = Math.max(4, Math.round((b.n / maxCount) * 100));
+    // Colour: interpolate from muted (quiet) → accent (busy) based on relative count
+    // Use opacity on the accent colour so quiet bars are visually distinct
+    const intensity = b.n / maxCount; // 0..1
+    // Low = muted blue-grey, high = accent blue (#58a6ff)
+    const alpha = 0.15 + intensity * 0.85; // 0.15 → 1.0
+    const barColor = `rgba(88,166,255,${alpha.toFixed(2)})`;
+
+    const d = new Date(b.t * 1000);
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    const endD = new Date((b.t + 1800) * 1000);
+    const ehh = String(endD.getUTCHours()).padStart(2, '0');
+    const emm = String(endD.getUTCMinutes()).padStart(2, '0');
+    const label = `${hh}:${mm}–${ehh}:${emm} UTC · ${b.n} aircraft`;
+
+    return `<div class="planes-activity-bar" title="${label}" style="height:${heightPct}%;background:${barColor};"></div>`;
+  }).join('');
+
+  container.innerHTML = `<div class="planes-activity-bars">${bars}</div>`;
+}
+
 // ---- Planes tab ------------------------------------------------------------
 
 // Returns a datalink icon + label for the current_link code.
@@ -1199,7 +1241,7 @@ function renderAircraftTable() {
   }
 
   if (list.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="13" class="empty">${planesFilterTerm ? 'No aircraft match the filter…' : 'No aircraft seen yet…'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="14" class="empty">${planesFilterTerm ? 'No aircraft match the filter…' : 'No aircraft seen yet…'}</td></tr>`;
     return;
   }
 
@@ -1215,8 +1257,11 @@ function renderAircraftTable() {
     const freq = ac.freq_khz ? ac.freq_khz.toLocaleString() : '—';
     const sig  = ac.sig_level != null ? ac.sig_level.toFixed(1) : '—';
     const sigCls = ac.sig_level != null ? sigClass(ac.sig_level) : '';
-    // Phase 3c: datalink
+    // Phase 3c: datalink and available links
     const dl = datalinkLabel(ac.current_link);
+    const availLinks = (ac.available_links && ac.available_links.length > 0)
+      ? ac.available_links.map(c => esc(c)).join(', ')
+      : '—';
     // Phase 3b: link quality
     let lqCell = '—';
     if (ac.error_rate != null && (ac.mpdu_rx || ac.mpdu_tx)) {
@@ -1236,6 +1281,7 @@ function renderAircraftTable() {
       <td class="mono">${freq}</td>
       <td>${esc(gsName)}</td>
       <td class="mono">${dl || '—'}</td>
+      <td class="mono">${availLinks}</td>
       <td class="mono ${sigCls}">${sig !== '—' ? sig + ' dBFS' : '—'}</td>
       <td>${lqCell}</td>
       <td class="dim">${fcc}</td>
@@ -1711,17 +1757,19 @@ function renderSignalCharts(series) {
         const d = new Date(b.t * 1000);
         return d.toUTCString().slice(17, 22); // "HH:MM"
       });
-      const avgData = s.buckets.map(b => b.avg);
-      const minData = s.buckets.map(b => b.min);
-      const maxData = s.buckets.map(b => b.max);
+      const avgData  = s.buckets.map(b => b.avg);
+      const minData  = s.buckets.map(b => b.min);
+      const maxData  = s.buckets.map(b => b.max);
+      const msgData  = s.buckets.map(b => b.n || 0);
 
       if (signalCharts[key]) {
         // Update existing chart in-place
         const ch = signalCharts[key];
         ch.data.labels = labels;
-        ch.data.datasets[0].data = avgData;
-        ch.data.datasets[1].data = minData;
-        ch.data.datasets[2].data = maxData;
+        ch.data.datasets[0].data = msgData;
+        ch.data.datasets[1].data = avgData;
+        ch.data.datasets[2].data = minData;
+        ch.data.datasets[3].data = maxData;
         ch.update('none');
         continue;
       }
@@ -1737,39 +1785,58 @@ function renderSignalCharts(series) {
 
       const canvas = card.querySelector('canvas');
       const chart = new Chart(canvas, {
-        type: 'line',
+        type: 'bar',
         data: {
           labels,
           datasets: [
             {
+              label: 'Msgs (30m)',
+              data: msgData,
+              type: 'bar',
+              yAxisID: 'yMsg',
+              backgroundColor: 'rgba(187,128,9,0.35)',
+              borderColor: 'rgba(187,128,9,0.7)',
+              borderWidth: 1,
+              order: 2,
+            },
+            {
               label: 'Avg (dBFS)',
               data: avgData,
+              type: 'line',
+              yAxisID: 'ySig',
               borderColor: '#58a6ff',
               backgroundColor: 'rgba(88,166,255,0.12)',
               borderWidth: 2,
               pointRadius: 2,
               tension: 0.3,
               fill: false,
+              order: 1,
             },
             {
               label: 'Min',
               data: minData,
+              type: 'line',
+              yAxisID: 'ySig',
               borderColor: '#f78166',
               borderWidth: 1,
               borderDash: [4, 3],
               pointRadius: 2,
               tension: 0.3,
               fill: false,
+              order: 1,
             },
             {
               label: 'Max',
               data: maxData,
+              type: 'line',
+              yAxisID: 'ySig',
               borderColor: '#3fb950',
               borderWidth: 1,
               borderDash: [4, 3],
               pointRadius: 2,
               tension: 0.3,
               fill: false,
+              order: 1,
             },
           ],
         },
@@ -1783,7 +1850,12 @@ function renderSignalCharts(series) {
             },
             tooltip: {
               callbacks: {
-                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} dBFS`,
+                label: ctx => {
+                  if (ctx.dataset.yAxisID === 'yMsg') {
+                    return `${ctx.dataset.label}: ${ctx.parsed.y}`;
+                  }
+                  return `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} dBFS`;
+                },
               },
             },
           },
@@ -1792,13 +1864,26 @@ function renderSignalCharts(series) {
               ticks: { color: '#8b949e', font: { size: 10 }, maxRotation: 0 },
               grid:  { color: 'rgba(48,54,61,0.8)' },
             },
-            y: {
+            ySig: {
+              type: 'linear',
+              position: 'left',
               ticks: {
                 color: '#8b949e',
                 font: { size: 10 },
                 callback: v => v.toFixed(0) + ' dB',
               },
               grid: { color: 'rgba(48,54,61,0.8)' },
+            },
+            yMsg: {
+              type: 'linear',
+              position: 'right',
+              beginAtZero: true,
+              ticks: {
+                color: '#bb8009',
+                font: { size: 10 },
+                precision: 0,
+              },
+              grid: { drawOnChartArea: false },
             },
           },
         },

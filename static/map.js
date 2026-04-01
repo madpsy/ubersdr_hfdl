@@ -1584,17 +1584,19 @@ function buildPopup(ac) {
     ? `Track: ${ac.true_trk_deg.toFixed(1)}° (${bearingToCardinal(ac.true_trk_deg)})<br>`
     : '';
   // Section 7.4: Phase 3 fields in aircraft popup
-  const dlIcon = ac.current_link
-    ? (() => {
-        switch (ac.current_link.toUpperCase()) {
-          case 'HF':     return '📻 HF';
-          case 'VHF':    return '📶 VHF';
-          case 'SATCOM': return '🛰 SATCOM';
-          default:       return esc(ac.current_link);
-        }
-      })()
-    : null;
+  function linkIcon(code) {
+    switch ((code || '').toUpperCase()) {
+      case 'HF':     return '📻 HF';
+      case 'VHF':    return '📶 VHF';
+      case 'SATCOM': return '🛰 SATCOM';
+      default:       return esc(code);
+    }
+  }
+  const dlIcon = ac.current_link ? linkIcon(ac.current_link) : null;
   const dlHtml = dlIcon ? `Datalink: ${dlIcon}<br>` : '';
+  const availHtml = (ac.available_links && ac.available_links.length > 0)
+    ? `Available: ${ac.available_links.map(c => esc(c)).join(', ')}<br>`
+    : '';
   const lqHtml = (ac.error_rate != null && (ac.mpdu_rx || ac.mpdu_tx))
     ? `Link quality: ${ac.error_rate.toFixed(1)}% err (${ac.mpdu_rx || 0} rx / ${ac.mpdu_tx || 0} tx)<br>`
     : '';
@@ -1615,6 +1617,7 @@ function buildPopup(ac) {
       ${trkHtml}
       ${windHtml}
       ${dlHtml}
+      ${availHtml}
       ${lqHtml}
       ${fccHtml}
       ${distHtml}
