@@ -1638,7 +1638,7 @@ function openAircraftPanel(ac) {
   // Fetch unified aircraft enrichment (adsbdb primary, hexdb fallback — done server-side)
   const acPromise = _aircraftCache.has(icao)
     ? Promise.resolve(_aircraftCache.get(icao))
-    : fetch('/aircraft/' + icao)
+    : fetch('/aircraft/' + icao + '/enrich')
         .then(r => r.ok ? r.json() : null)
         .then(data => { _aircraftCache.set(icao, data); return data; })
         .catch(() => { _aircraftCache.set(icao, null); return null; });

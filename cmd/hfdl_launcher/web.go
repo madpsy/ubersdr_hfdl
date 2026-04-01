@@ -238,23 +238,185 @@ func startWebServer(port int, staticDir string, store *statsStore, instances []*
 		}
 	})
 
-	// /aircraft/{key}/track — position history for a specific aircraft
+	// /aircraft/{key}/track    — position history for a specific aircraft
+	// /aircraft/{icao}/enrich  — unified enrichment (adsbdb primary, hexdb fallback)
+	// /aircraft/{icao}/photo   — Planespotters photo proxy
 	mux.HandleFunc("/aircraft/", func(w http.ResponseWriter, r *http.Request) {
-		// Expect path: /aircraft/{key}/track
 		path := strings.TrimPrefix(r.URL.Path, "/aircraft/")
 		key, suffix, _ := strings.Cut(path, "/")
-		if key == "" || suffix != "track" {
+		if key == "" {
 			http.NotFound(w, r)
 			return
 		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		track := store.trackSnapshot(key)
-		if track == nil {
-			track = []TrackPoint{} // return empty array, not null
-		}
-		if err := json.NewEncoder(w).Encode(track); err != nil {
-			log.Printf("web: /aircraft/track encode error: %v", err)
+
+		switch suffix {
+		case "track":
+			track := store.trackSnapshot(key)
+			if track == nil {
+				track = []TrackPoint{}
+			}
+			if err := json.NewEncoder(w).Encode(track); err != nil {
+				log.Printf("web: /aircraft/track encode error: %v", err)
+			}
+
+		case "photo":
+			icao := key
+			reg := r.URL.Query().Get("reg")
+			cacheKey := icao
+			if reg != "" {
+				cacheKey = icao + ":" + reg
+			}
+			if cached, ok := photoCache.get(cacheKey); ok {
+				w.Write(cached) //nolint:errcheck
+				return
+			}
+			upstream := "https://api.planespotters.net/pub/photos/hex/" + icao
+			if reg != "" {
+				upstream += "?reg=" + reg
+			}
+			resp, err := apiClient.Get(upstream)
+			if err != nil {
+				http.Error(w, `{"error":"planespotters fetch failed"}`, http.StatusBadGateway)
+				return
+			}
+			defer resp.Body.Close() //nolint:errcheck
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+			if err != nil {
+				http.Error(w, `{"error":"planespotters read failed"}`, http.StatusBadGateway)
+				return
+			}
+			if resp.StatusCode == http.StatusOK {
+				photoCache.set(cacheKey, body)
+			}
+			w.WriteHeader(resp.StatusCode)
+			w.Write(body) //nolint:errcheck
+
+		case "enrich":
+			icao := key
+			if cached, ok := aircraftCache.get(icao); ok {
+				w.Write(cached) //nolint:errcheck
+				return
+			}
+			result := aircraftEnrichment{}
+
+			// --- Primary: adsbdb ---
+			if resp, err := apiClient.Get("https://api.adsbdb.com/v0/aircraft/" + icao); err == nil {
+				defer resp.Body.Close() //nolint:errcheck
+				if resp.StatusCode == http.StatusOK {
+					var adData struct {
+						Response struct {
+							Aircraft *struct {
+								RegisteredOwner            string `json:"registered_owner"`
+								Type                       string `json:"type"`
+								ICAOType                   string `json:"icao_type"`
+								Manufacturer               string `json:"manufacturer"`
+								Registration               string `json:"registration"`
+								RegisteredOwnerCountryName string `json:"registered_owner_country_name"`
+							} `json:"aircraft"`
+							Flightroute *struct {
+								CallsignIATA string `json:"callsign_iata"`
+								Airline      *struct {
+									Name string `json:"name"`
+								} `json:"airline"`
+								Origin *struct {
+									ICAOCode     string `json:"icao_code"`
+									IATACode     string `json:"iata_code"`
+									Name         string `json:"name"`
+									Municipality string `json:"municipality"`
+								} `json:"origin"`
+								Destination *struct {
+									ICAOCode     string `json:"icao_code"`
+									IATACode     string `json:"iata_code"`
+									Name         string `json:"name"`
+									Municipality string `json:"municipality"`
+								} `json:"destination"`
+							} `json:"flightroute"`
+						} `json:"response"`
+					}
+					if body, err2 := io.ReadAll(io.LimitReader(resp.Body, 64*1024)); err2 == nil {
+						if json.Unmarshal(body, &adData) == nil {
+							ac := adData.Response.Aircraft
+							fr := adData.Response.Flightroute
+							if ac != nil {
+								result.Operator = ac.RegisteredOwner
+								result.Type = ac.Type
+								result.ICAOType = ac.ICAOType
+								result.Manufacturer = ac.Manufacturer
+								result.Registration = ac.Registration
+								result.Country = ac.RegisteredOwnerCountryName
+							}
+							if result.Operator == "" && fr != nil && fr.Airline != nil {
+								result.Operator = fr.Airline.Name
+							}
+							if fr != nil && fr.CallsignIATA != "" {
+								result.IATAFlight = fr.CallsignIATA
+							}
+							if fr != nil {
+								if fr.Origin != nil {
+									result.Origin = &routeAirport{
+										ICAO: fr.Origin.ICAOCode,
+										IATA: fr.Origin.IATACode,
+										Name: fr.Origin.Name,
+										City: fr.Origin.Municipality,
+									}
+								}
+								if fr.Destination != nil {
+									result.Destination = &routeAirport{
+										ICAO: fr.Destination.ICAOCode,
+										IATA: fr.Destination.IATACode,
+										Name: fr.Destination.Name,
+										City: fr.Destination.Municipality,
+									}
+								}
+							}
+							if result.Operator != "" || result.Type != "" {
+								result.Source = "adsbdb"
+							}
+						}
+					}
+				}
+			}
+
+			// --- Fallback: Hexdb (operator / type only) ---
+			if result.Operator == "" || result.Type == "" {
+				if resp, err := apiClient.Get("https://hexdb.io/api/v1/aircraft/" + icao); err == nil {
+					defer resp.Body.Close() //nolint:errcheck
+					if resp.StatusCode == http.StatusOK {
+						var hxData struct {
+							Operator         string `json:"Operator"`
+							RegisteredOwners string `json:"RegisteredOwners"`
+							Type             string `json:"Type"`
+						}
+						if body, err2 := io.ReadAll(io.LimitReader(resp.Body, 64*1024)); err2 == nil {
+							if json.Unmarshal(body, &hxData) == nil {
+								if result.Operator == "" {
+									if hxData.Operator != "" {
+										result.Operator = hxData.Operator
+									} else {
+										result.Operator = hxData.RegisteredOwners
+									}
+								}
+								if result.Type == "" {
+									result.Type = hxData.Type
+								}
+								if result.Source == "" && (result.Operator != "" || result.Type != "") {
+									result.Source = "hexdb"
+								}
+							}
+						}
+					}
+				}
+			}
+
+			out, _ := json.Marshal(result)
+			aircraftCache.set(icao, out)
+			w.Write(out) //nolint:errcheck
+
+		default:
+			http.NotFound(w, r)
 		}
 	})
 
@@ -500,178 +662,6 @@ func startWebServer(port int, staticDir string, store *statsStore, instances []*
 		if err := json.NewEncoder(w).Encode(msgs); err != nil {
 			log.Printf("web: /weather encode error: %v", err)
 		}
-	})
-
-	// /aircraft/{icao} — unified aircraft enrichment endpoint.
-	// Calls adsbdb first (operator, type, registration, flight route).
-	// Falls back to Hexdb for operator/type when adsbdb has none.
-	// Each upstream call has a 2-second timeout. Result is cached 24 h.
-	mux.HandleFunc("/aircraft/", func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/aircraft/")
-		parts := strings.SplitN(strings.Trim(path, "/"), "/", 2)
-		icao := parts[0]
-		if icao == "" {
-			http.Error(w, `{"error":"missing ICAO"}`, http.StatusBadRequest)
-			return
-		}
-		// Sub-path /aircraft/{icao}/photo is handled separately below.
-		if len(parts) > 1 && parts[1] == "photo" {
-			reg := r.URL.Query().Get("reg")
-			cacheKey := icao
-			if reg != "" {
-				cacheKey = icao + ":" + reg
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			if cached, ok := photoCache.get(cacheKey); ok {
-				w.Write(cached) //nolint:errcheck
-				return
-			}
-			upstream := "https://api.planespotters.net/pub/photos/hex/" + icao
-			if reg != "" {
-				upstream += "?reg=" + reg
-			}
-			resp, err := apiClient.Get(upstream)
-			if err != nil {
-				http.Error(w, `{"error":"planespotters fetch failed"}`, http.StatusBadGateway)
-				return
-			}
-			defer resp.Body.Close() //nolint:errcheck
-			body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-			if err != nil {
-				http.Error(w, `{"error":"planespotters read failed"}`, http.StatusBadGateway)
-				return
-			}
-			if resp.StatusCode == http.StatusOK {
-				photoCache.set(cacheKey, body)
-			}
-			w.WriteHeader(resp.StatusCode)
-			w.Write(body) //nolint:errcheck
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-
-		if cached, ok := aircraftCache.get(icao); ok {
-			w.Write(cached) //nolint:errcheck
-			return
-		}
-
-		result := aircraftEnrichment{}
-
-		// --- Primary: adsbdb ---
-		if resp, err := apiClient.Get("https://api.adsbdb.com/v0/aircraft/" + icao); err == nil {
-			defer resp.Body.Close() //nolint:errcheck
-			if resp.StatusCode == http.StatusOK {
-				var adData struct {
-					Response struct {
-						Aircraft *struct {
-							RegisteredOwner            string `json:"registered_owner"`
-							Type                       string `json:"type"`
-							ICAOType                   string `json:"icao_type"`
-							Manufacturer               string `json:"manufacturer"`
-							Registration               string `json:"registration"`
-							RegisteredOwnerCountryName string `json:"registered_owner_country_name"`
-						} `json:"aircraft"`
-						Flightroute *struct {
-							CallsignIATA string `json:"callsign_iata"`
-							Airline      *struct {
-								Name string `json:"name"`
-							} `json:"airline"`
-							Origin *struct {
-								ICAOCode     string `json:"icao_code"`
-								IATACode     string `json:"iata_code"`
-								Name         string `json:"name"`
-								Municipality string `json:"municipality"`
-							} `json:"origin"`
-							Destination *struct {
-								ICAOCode     string `json:"icao_code"`
-								IATACode     string `json:"iata_code"`
-								Name         string `json:"name"`
-								Municipality string `json:"municipality"`
-							} `json:"destination"`
-						} `json:"flightroute"`
-					} `json:"response"`
-				}
-				if body, err2 := io.ReadAll(io.LimitReader(resp.Body, 64*1024)); err2 == nil {
-					if json.Unmarshal(body, &adData) == nil {
-						ac := adData.Response.Aircraft
-						fr := adData.Response.Flightroute
-						if ac != nil {
-							result.Operator = ac.RegisteredOwner
-							result.Type = ac.Type
-							result.ICAOType = ac.ICAOType
-							result.Manufacturer = ac.Manufacturer
-							result.Registration = ac.Registration
-							result.Country = ac.RegisteredOwnerCountryName
-						}
-						if result.Operator == "" && fr != nil && fr.Airline != nil {
-							result.Operator = fr.Airline.Name
-						}
-						if fr != nil && fr.CallsignIATA != "" {
-							result.IATAFlight = fr.CallsignIATA
-						}
-						if fr != nil {
-							if fr.Origin != nil {
-								result.Origin = &routeAirport{
-									ICAO: fr.Origin.ICAOCode,
-									IATA: fr.Origin.IATACode,
-									Name: fr.Origin.Name,
-									City: fr.Origin.Municipality,
-								}
-							}
-							if fr.Destination != nil {
-								result.Destination = &routeAirport{
-									ICAO: fr.Destination.ICAOCode,
-									IATA: fr.Destination.IATACode,
-									Name: fr.Destination.Name,
-									City: fr.Destination.Municipality,
-								}
-							}
-						}
-						if result.Operator != "" || result.Type != "" {
-							result.Source = "adsbdb"
-						}
-					}
-				}
-			}
-		}
-
-		// --- Fallback: Hexdb (operator / type only) ---
-		if result.Operator == "" || result.Type == "" {
-			if resp, err := apiClient.Get("https://hexdb.io/api/v1/aircraft/" + icao); err == nil {
-				defer resp.Body.Close() //nolint:errcheck
-				if resp.StatusCode == http.StatusOK {
-					var hxData struct {
-						Operator         string `json:"Operator"`
-						RegisteredOwners string `json:"RegisteredOwners"`
-						Type             string `json:"Type"`
-					}
-					if body, err2 := io.ReadAll(io.LimitReader(resp.Body, 64*1024)); err2 == nil {
-						if json.Unmarshal(body, &hxData) == nil {
-							if result.Operator == "" {
-								if hxData.Operator != "" {
-									result.Operator = hxData.Operator
-								} else {
-									result.Operator = hxData.RegisteredOwners
-								}
-							}
-							if result.Type == "" {
-								result.Type = hxData.Type
-							}
-							if result.Source == "" && (result.Operator != "" || result.Type != "") {
-								result.Source = "hexdb"
-							}
-						}
-					}
-				}
-			}
-		}
-
-		out, _ := json.Marshal(result)
-		aircraftCache.set(icao, out)
-		w.Write(out) //nolint:errcheck
 	})
 
 	// /events — Server-Sent Events stream
