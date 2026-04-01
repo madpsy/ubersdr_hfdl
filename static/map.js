@@ -1083,6 +1083,8 @@ function togglePropagationLayer(visible) {
   } else if (propagationLayerGroup) {
     hfdlMap.removeLayer(propagationLayerGroup);
     propagationLayerGroup.clearLayers();
+    // Clear the line cache so re-enabling recreates all lines fresh
+    for (const k of Object.keys(_propLines)) delete _propLines[k];
   }
 }
 
