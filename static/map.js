@@ -1758,8 +1758,9 @@ function upsertMarker(ac, fromSSE = false) {
   renderFreqBandControl();
   renderDistanceStats();
 
-  // Auto-fit: only trigger on live SSE updates to avoid fitting on every render
-  if (fromSSE && autoFit) fitToVisibleAircraft();
+  // Auto-fit: only trigger on live SSE updates, and only when nothing is selected.
+  // When an aircraft is selected the user has intentionally zoomed in — don't override that.
+  if (fromSSE && autoFit && !selectedKey && selectedGS === null) fitToVisibleAircraft();
 }
 
 // ---- Selection / track -----------------------------------------------------
