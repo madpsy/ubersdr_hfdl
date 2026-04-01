@@ -1785,31 +1785,31 @@ function selectAircraft(key, fitBounds = false) {
   fetch(`/aircraft/${encodeURIComponent(key)}/track`)
     .then(r => r.json())
     .then(track => {
-      if (!Array.isArray(track) || track.length < 2) {
-        // No track — just pan to the marker if fitBounds was requested
-        if (fitBounds) {
-          const marker = aircraftMarkers[key];
-          if (marker && hfdlMap) hfdlMap.panTo(marker.getLatLng());
-        }
-        return;
-      }
-      const latlngs = track.map(p => [p.lat, p.lon]);
-      // Use the same colour as the aircraft marker (keyed by its GS)
       const ac = aircraftData[key];
       const trackColor = ac ? gsColorFor(ac.gs_id) : '#58a6ff';
-      trackPolyline = L.polyline(latlngs, {
-        color:   trackColor,
-        weight:  3,
-        opacity: 1,
-      }).addTo(hfdlMap);
 
-      // Fit the map so all historical positions (plus the current marker) are visible
+      // Draw the polyline if there are at least 2 points
+      if (Array.isArray(track) && track.length >= 2) {
+        const latlngs = track.map(p => [p.lat, p.lon]);
+        trackPolyline = L.polyline(latlngs, {
+          color:   trackColor,
+          weight:  3,
+          opacity: 1,
+        }).addTo(hfdlMap);
+      }
+
+      // Always fit/pan when requested, regardless of track length
       if (fitBounds && hfdlMap) {
-        const bounds = L.latLngBounds(latlngs);
-        // Include the current marker position in case it is slightly outside the track
         const marker = aircraftMarkers[key];
-        if (marker) bounds.extend(marker.getLatLng());
-        hfdlMap.fitBounds(bounds, { padding: [60, 60], maxZoom: 8 });
+        if (Array.isArray(track) && track.length >= 2) {
+          // Multiple points — fit bounds to the full track
+          const bounds = L.latLngBounds(track.map(p => [p.lat, p.lon]));
+          if (marker) bounds.extend(marker.getLatLng());
+          hfdlMap.fitBounds(bounds, { padding: [60, 60], maxZoom: 8 });
+        } else if (marker) {
+          // Single position or no track — zoom in on the marker
+          hfdlMap.setView(marker.getLatLng(), Math.max(hfdlMap.getZoom(), 6));
+        }
       }
     })
     .catch(err => console.warn('track fetch error:', err));
