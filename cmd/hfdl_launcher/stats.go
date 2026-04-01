@@ -243,14 +243,15 @@ type hfdlMessage struct {
 					Sublabel string `json:"sublabel"`
 					MsgText  string `json:"msg_text"`
 					// Phase 3c: media-adv current_link and links_avail
+					// Note: dumphfdl uses "descr" (not "name") for the link description.
 					MediaAdv *struct {
 						CurrentLink *struct {
-							Code string `json:"code"`
-							Name string `json:"name"`
+							Code  string `json:"code"`
+							Descr string `json:"descr"`
 						} `json:"current_link"`
 						LinksAvail []struct {
-							Code string `json:"code"`
-							Name string `json:"name"`
+							Code  string `json:"code"`
+							Descr string `json:"descr"`
 						} `json:"links_avail"`
 					} `json:"media-adv"`
 					// Section 2.6.4: ADS-C position contracts via libacars
@@ -957,17 +958,17 @@ func (s *statsStore) ingest(line string) {
 				if h.LPDU.HFNPDU.ACARS != nil &&
 					h.LPDU.HFNPDU.ACARS.MediaAdv != nil &&
 					h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink != nil {
-					existing.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Name
+					existing.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Descr
 					// Also populate RecentMessage for the Live Feed datalink column
-					rm.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Name
+					rm.CurrentLink = h.LPDU.HFNPDU.ACARS.MediaAdv.CurrentLink.Descr
 				}
 				if h.LPDU.HFNPDU.ACARS != nil &&
 					h.LPDU.HFNPDU.ACARS.MediaAdv != nil &&
 					len(h.LPDU.HFNPDU.ACARS.MediaAdv.LinksAvail) > 0 {
 					avail := make([]string, 0, len(h.LPDU.HFNPDU.ACARS.MediaAdv.LinksAvail))
 					for _, l := range h.LPDU.HFNPDU.ACARS.MediaAdv.LinksAvail {
-						if l.Name != "" {
-							avail = append(avail, l.Name)
+						if l.Descr != "" {
+							avail = append(avail, l.Descr)
 						}
 					}
 					if len(avail) > 0 {

@@ -188,7 +188,57 @@ function renderFreqTable(frequencies) {
   }).join('');
 }
 
+// ---- Map RA alert ----------------------------------------------------------
+
+let raAlertTimer = null;
+
+function showRAAlert(msg) {
+  const el    = document.getElementById('map-ra-alert');
+  const body  = document.getElementById('map-ra-alert-body');
+  const close = document.getElementById('map-ra-alert-close');
+  if (!el || !body) return;
+
+  const ac      = [msg.reg, msg.flight].filter(Boolean).join(' / ') || '—';
+  const gs      = msg.src_type === 'Ground station'
+    ? `GS ${msg.src_id}`
+    : (msg.dst_type === 'Ground station' ? `GS ${msg.dst_id}` : '—');
+  const freq    = msg.freq_khz ? msg.freq_khz.toLocaleString() + ' kHz' : '—';
+  const msgText = msg.msg_text || '';
+
+  body.innerHTML =
+    `<div class="map-ra-alert__title">⚠ Request for Acknowledgement (RA)</div>` +
+    `<div class="map-ra-alert__row">Aircraft: <span>${esc(ac)}</span> &nbsp;·&nbsp; ` +
+    `GS: <span>${esc(gs)}</span> &nbsp;·&nbsp; Freq: <span>${esc(freq)}</span></div>` +
+    (msgText ? `<div class="map-ra-alert__msg">${esc(msgText)}</div>` : '');
+
+  el.hidden = false;
+
+  // Reset auto-dismiss timer
+  if (raAlertTimer) clearTimeout(raAlertTimer);
+  raAlertTimer = setTimeout(() => {
+    el.hidden = true;
+    raAlertTimer = null;
+  }, 5000);
+
+  // Wire close button (re-attach each time to avoid stale closures)
+  close.onclick = () => {
+    el.hidden = true;
+    if (raAlertTimer) { clearTimeout(raAlertTimer); raAlertTimer = null; }
+  };
+}
+
 // ---- Live feed table -------------------------------------------------------
+
+// Abbreviated LPDU type names emitted by dumphfdl that need expanding for display.
+// Full English names are passed through unchanged.
+const LPDU_TYPE_NAMES = {
+  'RA': 'Request for Acknowledgement',
+};
+
+function expandMsgType(raw) {
+  if (!raw) return raw;
+  return LPDU_TYPE_NAMES[raw] ? `${LPDU_TYPE_NAMES[raw]} (${raw})` : raw;
+}
 
 function buildFeedRow(msg) {
   const time    = fmtTime(msg.time);
@@ -200,7 +250,7 @@ function buildFeedRow(msg) {
   const src     = gsLabel(msg.src_type, msg.src_id, msg.src_icao);
   const dst     = msg.dst_type ? gsLabel(msg.dst_type, msg.dst_id) : '—';
   const typeCls = msg.msg_type === 'SPDU' ? 'type-spdu' : 'type-lpdu';
-  const type    = esc(msg.msg_type) || '—';
+  const type    = esc(expandMsgType(msg.msg_type)) || '—';
   const regFlt  = [esc(msg.reg), esc(msg.flight)].filter(Boolean).join(' / ') || '';
   // Phase 1b: truncated message text (max 60 chars)
   const msgText = msg.msg_text
@@ -265,7 +315,7 @@ function feedMatchesFilter(msg) {
         !(msg.src_icao || '').toLowerCase().includes(t)) return false;
   }
   if (feedFilter.flight && !(msg.flight || '').toLowerCase().includes(feedFilter.flight)) return false;
-  if (feedFilter.type  && !(msg.msg_type || '').toLowerCase().includes(feedFilter.type))  return false;
+  if (feedFilter.type  && !(expandMsgType(msg.msg_type) || '').toLowerCase().includes(feedFilter.type))  return false;
   return true;
 }
 
@@ -1076,6 +1126,10 @@ function handleSSEEvent(raw) {
     } else if (data.msg_type === 'Logoff request' || data.msg_type === 'Logon denied') {
       addEventEntry('logoff', data);
     }
+    // Show RA alert on map tab
+    if (data.msg_type === 'RA') {
+      showRAAlert(data);
+    }
 
   } else if (type === 'position') {
     // Update local store and re-render planes table if visible
@@ -1221,12 +1275,11 @@ function renderPlanesActivityChart(buckets) {
 // Returns a datalink icon + label for the current_link code.
 function datalinkLabel(code) {
   if (!code) return '';
-  switch (code.toUpperCase()) {
-    case 'HF':     return '📻 HF';
-    case 'VHF':    return '📶 VHF';
-    case 'SATCOM': return '🛰 SAT';
-    default:       return esc(code);
-  }
+  const u = code.toUpperCase();
+  if (u === 'HF')                          return '📻 HF';
+  if (u === 'VHF' || u.startsWith('VHF ')) return '📶 VHF';
+  if (u === 'SATCOM' || u.includes('SATCOM')) return '🛰 SAT';
+  return esc(code);
 }
 
 // Returns a colour class for an error rate percentage.

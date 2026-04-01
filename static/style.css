@@ -2130,6 +2130,70 @@ td.empty {
   color: var(--text);
 }
 
+/* ---- Map RA alert box ---- */
+
+#map-ra-alert {
+  position: absolute;
+  top: 58px; /* below the search bar (12px top + ~34px height + 12px gap) */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  min-width: 320px;
+  max-width: 520px;
+  background: rgba(13, 17, 23, 0.95);
+  border: 2px dashed var(--red);
+  border-radius: 6px;
+  padding: 10px 36px 10px 14px;
+  box-shadow: 0 2px 12px rgba(248, 81, 73, 0.35);
+  pointer-events: all;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#map-ra-alert-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+#map-ra-alert-close:hover {
+  color: var(--red);
+}
+
+.map-ra-alert__title {
+  font-weight: 600;
+  color: var(--red);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-ra-alert__row {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.map-ra-alert__row span {
+  color: var(--text);
+}
+
+.map-ra-alert__msg {
+  margin-top: 5px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-word;
+}
+
 /* ---- Live Feed — row colour coding by LPDU type (Section 7.1) ---- */
 
 .feed-row--logon  { background: rgba(63, 185, 80, 0.07); }
