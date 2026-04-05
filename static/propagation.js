@@ -120,7 +120,7 @@ function renderPropagationTab(snap) {
 // ---- Data loading ----------------------------------------------------------
 
 function loadPropagationTab() {
-  fetch('/propagation')
+  fetch(BASE_PATH + '/propagation')
     .then(r => r.json())
     .then(snap => renderPropagationTab(snap))
     .catch(err => console.warn('propagation tab fetch error:', err));

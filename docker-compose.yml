@@ -23,3 +23,10 @@ services:
       # creates the host directory.  To enable recording, just uncomment:
       # IQ_RECORD_DIR: "/iq_recordings"
       # IQ_RECORD_SECONDS: "30"
+    networks:
+      - sdr-network
+
+networks:
+  sdr-network:
+    external: true
+    name: ubersdr_sdr-network

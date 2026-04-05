@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"net/http"
@@ -740,9 +741,31 @@ func startWebServer(port int, staticDir string, store *statsStore, instances []*
 		}
 	})
 
-	// / — static files
+	// / — serve index.html as a template (injects BasePath from X-Forwarded-Prefix),
+	// then fall through to the static file server for all other paths.
+	var indexTmpl *template.Template
 	if staticDir != "" {
-		mux.Handle("/", http.FileServer(http.Dir(staticDir)))
+		indexData, indexErr := os.ReadFile(filepath.Join(staticDir, "index.html"))
+		if indexErr == nil {
+			indexTmpl, _ = template.New("index").Parse(string(indexData))
+		}
+	}
+
+	if staticDir != "" {
+		fs := http.FileServer(http.Dir(staticDir))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+				if indexTmpl != nil {
+					basePath := strings.TrimRight(r.Header.Get("X-Forwarded-Prefix"), "/")
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					if err := indexTmpl.Execute(w, map[string]string{"BasePath": basePath}); err != nil {
+						log.Printf("web: index template execute error: %v", err)
+					}
+					return
+				}
+			}
+			fs.ServeHTTP(w, r)
+		})
 	} else {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "no static directory configured (-web-static flag)", http.StatusNotFound)

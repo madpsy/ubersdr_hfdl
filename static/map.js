@@ -817,7 +817,7 @@ function buildGSPopup(gs, distKm) {
 }
 
 function loadGSMarkers() {
-  fetch('/groundstations')
+  fetch(BASE_PATH + '/groundstations')
     .then(r => r.json())
     .then(list => {
       if (!Array.isArray(list)) return;
@@ -1025,7 +1025,7 @@ function updatePropagationLayer() {
     return;
   }
 
-  fetch('/propagation')
+  fetch(BASE_PATH + '/propagation')
     .then(r => r.json())
     .then(snap => {
       if (!snap || !snap.paths) return;
@@ -1639,7 +1639,7 @@ function openAircraftPanel(ac) {
   // Fetch unified aircraft enrichment (adsbdb primary, hexdb fallback — done server-side)
   const acPromise = _aircraftCache.has(icao)
     ? Promise.resolve(_aircraftCache.get(icao))
-    : fetch('/aircraft/' + icao + '/enrich')
+    : fetch(BASE_PATH + '/aircraft/' + icao + '/enrich')
         .then(r => r.ok ? r.json() : null)
         .then(data => { _aircraftCache.set(icao, data); return data; })
         .catch(() => { _aircraftCache.set(icao, null); return null; });
@@ -1647,7 +1647,7 @@ function openAircraftPanel(ac) {
   // Fetch Planespotters photo — backend resolves reg from the live store automatically
   const photoPromise = _photoCache.has(icao)
     ? Promise.resolve(_photoCache.get(icao))
-    : fetch('/aircraft/' + icao + '/photo')
+    : fetch(BASE_PATH + '/aircraft/' + icao + '/photo')
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           const photo = data && Array.isArray(data.photos) && data.photos.length > 0
@@ -1773,7 +1773,7 @@ function initMap() {
 // ---- Load initial aircraft positions ---------------------------------------
 
 function loadAircraft() {
-  fetch('/aircraft')
+  fetch(BASE_PATH + '/aircraft')
     .then(r => r.json())
     .then(list => {
       if (!Array.isArray(list)) return;
@@ -2029,7 +2029,7 @@ function selectAircraft(key, fitBounds = false) {
   }
 
   // Fetch and draw the track for the newly selected aircraft
-  fetch(`/aircraft/${encodeURIComponent(key)}/track`)
+  fetch(BASE_PATH + `/aircraft/${encodeURIComponent(key)}/track`)
     .then(r => r.json())
     .then(track => {
       const ac = aircraftData[key];

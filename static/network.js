@@ -139,8 +139,8 @@ function renderNetworkTab(networkData, gsData) {
 
 function loadNetworkTab() {
   Promise.all([
-    fetch('/network').then(r => r.json()),
-    fetch('/groundstations').then(r => r.json()),
+    fetch(BASE_PATH + '/network').then(r => r.json()),
+    fetch(BASE_PATH + '/groundstations').then(r => r.json()),
   ])
     .then(([netData, gsData]) => {
       _netLastData = netData;

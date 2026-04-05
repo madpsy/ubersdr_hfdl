@@ -8,7 +8,7 @@
   <!-- Leaflet CSS (CDN) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
 
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="{{.BasePath}}/style.css" />
 </head>
 <body>
   <header>
@@ -364,10 +364,11 @@
   <!-- Chart.js (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
-  <script src="app.js?v=3"></script>
-  <script src="map.js?v=9"></script>
-  <script src="network.js?v=1"></script>
-  <script src="propagation.js?v=1"></script>
-  <script src="linkquality.js?v=1"></script>
+  <script>window.BASE_PATH = "{{.BasePath}}";</script>
+  <script src="{{.BasePath}}/app.js?v=3"></script>
+  <script src="{{.BasePath}}/map.js?v=9"></script>
+  <script src="{{.BasePath}}/network.js?v=1"></script>
+  <script src="{{.BasePath}}/propagation.js?v=1"></script>
+  <script src="{{.BasePath}}/linkquality.js?v=1"></script>
 </body>
 </html>

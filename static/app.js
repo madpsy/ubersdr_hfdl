@@ -4,6 +4,8 @@
 
 'use strict';
 
+const BASE_PATH = (typeof window.BASE_PATH === 'string') ? window.BASE_PATH : '';
+
 const MAX_FEED_ROWS = 200;
 const MAX_MESSAGES_ROWS = 500; // Messages tab ring buffer
 const MAX_EVENTS_ROWS = 500;   // Events tab ring buffer
@@ -950,7 +952,7 @@ function handleGSEvent(data) {
 // ---- Initial stats load ----------------------------------------------------
 
 function loadStats() {
-  fetch('/stats')
+  fetch(BASE_PATH + '/stats')
     .then(r => r.json())
     .then(data => {
       // Populate ground station name lookup (keys come as strings from JSON)
@@ -1172,7 +1174,7 @@ function connectSSE() {
   }
 
   setIndicator('connecting');
-  evtSource = new EventSource('/events');
+  evtSource = new EventSource(BASE_PATH + '/events');
 
   evtSource.onopen = () => {
     setIndicator('connected');
@@ -1412,7 +1414,7 @@ function renderAircraftTable() {
 }
 
 function loadAircraftTab() {
-  fetch('/aircraft')
+  fetch(BASE_PATH + '/aircraft')
     .then(r => r.json())
     .then(list => {
       if (!Array.isArray(list)) return;
@@ -1510,8 +1512,8 @@ function loadGroundStations() {
   // Fetch both /groundstations and /propagation in parallel so we can show
   // "Heard by N aircraft" counts on each GS card.
   Promise.all([
-    fetch('/groundstations').then(r => r.json()),
-    fetch('/propagation').then(r => r.json()).catch(() => null),
+    fetch(BASE_PATH + '/groundstations').then(r => r.json()),
+    fetch(BASE_PATH + '/propagation').then(r => r.json()).catch(() => null),
   ])
     .then(([data, propSnap]) => {
       // Build dstFreqsByGS from the dst_freqs_khz field on each station
@@ -1540,7 +1542,7 @@ function loadGroundStations() {
 let cachedInstancesData = null;
 
 function loadInstances() {
-  return fetch('/instances')
+  return fetch(BASE_PATH + '/instances')
     .then(r => r.json())
     .then(data => {
       cachedInstancesData = data;
@@ -1798,7 +1800,7 @@ function renderInstances(data) {
 const signalCharts = {};
 
 function loadSignalHistory() {
-  fetch('/signal')
+  fetch(BASE_PATH + '/signal')
     .then(r => r.json())
     .then(renderSignalCharts)
     .catch(err => console.warn('signal fetch error:', err));
@@ -2017,7 +2019,7 @@ function renderSignalCharts(series) {
 
 function exportActiveFrequencies() {
   const a = document.createElement('a');
-  a.href = '/export/frequencies';
+  a.href = BASE_PATH + '/export/frequencies';
   a.download = 'hfdl_frequencies.jsonl';
   document.body.appendChild(a);
   a.click();
@@ -2026,7 +2028,7 @@ function exportActiveFrequencies() {
 
 function exportAllFrequencies() {
   const a = document.createElement('a');
-  a.href = '/export/frequencies/all';
+  a.href = BASE_PATH + '/export/frequencies/all';
   a.download = 'hfdl_frequencies.jsonl';
   document.body.appendChild(a);
   a.click();
@@ -2035,7 +2037,7 @@ function exportAllFrequencies() {
 
 function exportLatestFrequencies() {
   const a = document.createElement('a');
-  a.href = '/export/frequencies/latest';
+  a.href = BASE_PATH + '/export/frequencies/latest';
   a.download = 'hfdl_frequencies.jsonl';
   document.body.appendChild(a);
   a.click();
@@ -2150,7 +2152,7 @@ function openApplyModal(endpoint, title, desc) {
  * marker.  Failures are silently ignored so the rest of the UI is unaffected.
  */
 function fetchReceiverDescription() {
-  fetch('/receiver/description')
+  fetch(BASE_PATH + '/receiver/description')
     .then(r => {
       if (!r.ok) return null;
       return r.json();
@@ -2194,21 +2196,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btn-apply-freqs').addEventListener('click', () =>
     openApplyModal(
-      '/apply/frequencies',
+      BASE_PATH + '/apply/frequencies',
       'Apply Active Frequencies',
       'This will overwrite the frequency file with only the frequencies that have been active during this session, then restart the service.'
     )
   );
   document.getElementById('btn-apply-all-freqs').addEventListener('click', () =>
     openApplyModal(
-      '/apply/frequencies/all',
+      BASE_PATH + '/apply/frequencies/all',
       'Apply All Frequencies',
       'This will overwrite the frequency file with every frequency marked as enabled, then restart the service.'
     )
   );
   document.getElementById('btn-apply-latest-freqs').addEventListener('click', () =>
     openApplyModal(
-      '/apply/frequencies/latest',
+      BASE_PATH + '/apply/frequencies/latest',
       'Apply Latest Frequencies',
       'This will fetch the latest frequency list from ubersdr.org, overwrite the frequency file, then restart the service.'
     )
