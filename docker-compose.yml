@@ -1,5 +1,6 @@
 services:
   hfdl_launcher:
+    container_name: hfdl
     image: madpsy/ubersdr_hfdl:latest
     restart: unless-stopped
     ports:
