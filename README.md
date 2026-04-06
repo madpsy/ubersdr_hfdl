@@ -22,8 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/madpsy/ubersdr_hfdl/refs/heads/main
 This will download `docker-compose.yml` into `~/ubersdr/hfdl/`, pull the image,
 and start the container automatically.
 
-Once running, open **http://ubersdr.local:6090** in a browser to view the live
-statistics dashboard.
+Once running, access the live statistics dashboard via the UberSDR proxy.
 
 > **Note:** The container connects to UberSDR at `http://ubersdr:8080` by
 > default.  To use a different address, edit `~/ubersdr/hfdl/docker-compose.yml`
