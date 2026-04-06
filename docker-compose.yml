@@ -9,7 +9,7 @@ services:
       # Extra arguments forwarded to dumphfdl (after --)
       EXTRA_ARGS: ""
       # Uncomment and set as needed:
-      # UBERSDR_URL: "http://172.20.0.1:8080"
+      # UBERSDR_URL: "http://ubersdr:8080"
       # PASS: ""
       # STATION: "1,2,3"
       # SYSTEM_TABLE: ""

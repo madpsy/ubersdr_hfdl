@@ -2,7 +2,7 @@
 # entrypoint.sh — translate environment variables into hfdl_launcher flags
 #
 # Environment variables:
-#   UBERSDR_URL         UberSDR base URL (default: http://172.20.0.1:8080)
+#   UBERSDR_URL         UberSDR base URL (default: http://ubersdr:8080)
 #   PASS                Bypass password
 #   STATION             Comma-separated station IDs           e.g. 1,2,3
 #   SYSTEM_TABLE        Path to system table file

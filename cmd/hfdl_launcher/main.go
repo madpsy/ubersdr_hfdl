@@ -11,7 +11,7 @@
 //
 //	hfdl_launcher [flags] [-- dumphfdl-extra-args...]
 //
-//	  -url               UberSDR base URL (default: http://172.20.0.1:8080)
+//	  -url               UberSDR base URL (default: http://ubersdr:8080)
 //	  -pass              Bypass password (optional)
 //	  -ubersdr-iq        Path to ubersdr_iq binary (default: ubersdr_iq)
 //	  -dumphfdl          Path to dumphfdl binary (default: dumphfdl)
@@ -44,7 +44,7 @@ import (
 func printUsage(w io.Writer) {
 	fmt.Fprintf(w, "Usage: hfdl_launcher [flags] [-- dumphfdl-args...]\n\n")                                                 //nolint:errcheck
 	fmt.Fprintf(w, "Flags:\n")                                                                                               //nolint:errcheck
-	fmt.Fprintf(w, "  -url               UberSDR base URL (default: http://172.20.0.1:8080)\n")                              //nolint:errcheck
+	fmt.Fprintf(w, "  -url               UberSDR base URL (default: http://ubersdr:8080)\n")                                 //nolint:errcheck
 	fmt.Fprintf(w, "  -pass              Bypass password (optional)\n")                                                      //nolint:errcheck
 	fmt.Fprintf(w, "  -ubersdr-iq        Path to ubersdr_iq binary (default: ubersdr_iq)\n")                                 //nolint:errcheck
 	fmt.Fprintf(w, "  -dumphfdl          Path to dumphfdl binary (default: dumphfdl)\n")                                     //nolint:errcheck
@@ -216,7 +216,7 @@ type config struct {
 
 func main() {
 	var (
-		ubersdrURL      = flag.String("url", "http://172.20.0.1:8080", "UberSDR base URL")
+		ubersdrURL      = flag.String("url", "http://ubersdr:8080", "UberSDR base URL")
 		password        = flag.String("pass", "", "Bypass password")
 		ubersdrPath     = flag.String("ubersdr-iq", "ubersdr_iq", "Path to ubersdr_iq binary")
 		dumphfdlPath    = flag.String("dumphfdl", "dumphfdl", "Path to dumphfdl binary")

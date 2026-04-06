@@ -25,7 +25,7 @@ and start the container automatically.
 Once running, open **http://ubersdr.local:6090** in a browser to view the live
 statistics dashboard.
 
-> **Note:** The container connects to UberSDR at `http://172.20.0.1:8080` by
+> **Note:** The container connects to UberSDR at `http://ubersdr:8080` by
 > default.  To use a different address, edit `~/ubersdr/hfdl/docker-compose.yml`
 > and set the `UBERSDR_URL` environment variable, then run `docker compose up -d`
 > from that directory.
@@ -222,7 +222,7 @@ flags are available as env vars:
 
 | Env var | Equivalent flag | Default |
 |---------|----------------|---------|
-| `UBERSDR_URL` | `-url` | `http://172.20.0.1:8080` |
+| `UBERSDR_URL` | `-url` | `http://ubersdr:8080` |
 | `PASS` | `-pass` | |
 | `STATION` | `-station` | *(all)* |
 | `SYSTEM_TABLE` | `-system-table` | |
@@ -248,7 +248,7 @@ flags are available as env vars:
 docker run --rm \
   --name ubersdr_hfdl \
   -p 6090:6090 \
-  -e UBERSDR_URL=http://172.20.0.1:8080 \
+  -e UBERSDR_URL=http://ubersdr:8080 \
   hfdl_launcher:latest
 ```
 
@@ -260,7 +260,7 @@ Open `http://localhost:6090` in a browser to view the statistics dashboard.
 docker run --rm \
   --name ubersdr_hfdl \
   -p 9000:9000 \
-  -e UBERSDR_URL=http://172.20.0.1:8080 \
+  -e UBERSDR_URL=http://ubersdr:8080 \
   -e WEB_PORT=9000 \
   hfdl_launcher:latest
 ```
@@ -270,7 +270,7 @@ docker run --rm \
 ```bash
 docker run --rm \
   --name ubersdr_hfdl \
-  -e UBERSDR_URL=http://172.20.0.1:8080 \
+  -e UBERSDR_URL=http://ubersdr:8080 \
   -e WEB_PORT=0 \
   hfdl_launcher:latest
 ```
@@ -282,7 +282,7 @@ The `--output` specifier format is `<what>:<format>:<type>:<params>`:
 ```bash
 docker run --rm \
   --name ubersdr_hfdl \
-  -e UBERSDR_URL=http://172.20.0.1:8080 \
+  -e UBERSDR_URL=http://ubersdr:8080 \
   -e EXTRA_ARGS="--output decoded:basestation:tcp:address=adsb.oarc.uk,port=32010" \
   hfdl_launcher:latest
 ```
@@ -292,7 +292,7 @@ docker run --rm \
 ```bash
 docker run --rm \
   --name ubersdr_hfdl \
-  -e UBERSDR_URL=http://172.20.0.1:8080 \
+  -e UBERSDR_URL=http://ubersdr:8080 \
   -e EXTRA_ARGS="--output decoded:json:udp:address=192.168.1.20,port=5555" \
   hfdl_launcher:latest
 ```
@@ -302,7 +302,7 @@ docker run --rm \
 ```bash
 docker run --rm \
   --name ubersdr_hfdl \
-  -e UBERSDR_URL=http://172.20.0.1:8080 \
+  -e UBERSDR_URL=http://ubersdr:8080 \
   -e STATION=1,2,3 \
   hfdl_launcher:latest
 ```
@@ -312,7 +312,7 @@ docker run --rm \
 ```bash
 docker run --rm \
   --name ubersdr_hfdl \
-  -e UBERSDR_URL=http://172.20.0.1:8080 \
+  -e UBERSDR_URL=http://ubersdr:8080 \
   -e SYSTEM_TABLE=/data/systable.conf \
   -v /etc/dumphfdl:/data:ro \
   hfdl_launcher:latest
@@ -328,7 +328,7 @@ directory inside the container that you volume-mount from the host.
 ```bash
 docker run --rm \
   --name ubersdr_hfdl \
-  -e UBERSDR_URL=http://172.20.0.1:8080 \
+  -e UBERSDR_URL=http://ubersdr:8080 \
   -e IQ_RECORD_DIR=/iq_recordings \
   -e IQ_RECORD_SECONDS=30 \
   -v /home/user/iq_recordings:/iq_recordings \
@@ -360,7 +360,7 @@ volumes:
 ```bash
 docker run --rm \
   --name ubersdr_hfdl \
-  -e UBERSDR_URL=http://172.20.0.1:8080 \
+  -e UBERSDR_URL=http://ubersdr:8080 \
   -e DRY_RUN=1 \
   hfdl_launcher:latest
 ```
@@ -368,7 +368,7 @@ docker run --rm \
 #### Using `docker.sh run` (passes env vars from the current shell)
 
 ```bash
-export UBERSDR_URL=http://172.20.0.1:8080
+export UBERSDR_URL=http://ubersdr:8080
 export EXTRA_ARGS="--output decoded:basestation:tcp:address=adsb.oarc.uk,port=32010 --output decoded:text:file:path=-"
 ./docker.sh run
 ```
@@ -432,7 +432,7 @@ IQ mode centred on the given frequency, and writes a continuous stream of raw
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-url` | `http://172.20.0.1:8080` | UberSDR base URL |
+| `-url` | `http://ubersdr:8080` | UberSDR base URL |
 | `-freq` | *(required)* | Centre frequency in Hz |
 | `-iq-mode` | `iq` | IQ mode (see table below) |
 | `-pass` | | Bypass password (if required by the server) |
@@ -500,7 +500,7 @@ independently sized.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-url` | `http://172.20.0.1:8080` | UberSDR base URL |
+| `-url` | `http://ubersdr:8080` | UberSDR base URL |
 | `-pass` | | Bypass password |
 | `-ubersdr-iq` | `ubersdr_iq` | Path to the `ubersdr_iq` binary |
 | `-dumphfdl` | `dumphfdl` | Path to the `dumphfdl` binary |

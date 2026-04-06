@@ -73,7 +73,7 @@ push() {
 
 run_image() {
     # Build hfdl_launcher argument list from env vars
-    # UBERSDR_URL defaults to http://172.20.0.1:8080 in the binary if not set
+    # UBERSDR_URL defaults to http://ubersdr:8080 in the binary if not set
     # IQ mode (bandwidth) is chosen automatically — no flag needed.
     args=()
     [[ -n "${UBERSDR_URL:-}" ]] && args+=(-url "$UBERSDR_URL")
@@ -106,7 +106,7 @@ run_image() {
 # Environment variable reference (for docker run -e ...)
 # ---------------------------------------------------------------------------
 #
-#   UBERSDR_URL    UberSDR base URL (default: http://172.20.0.1:8080)
+#   UBERSDR_URL    UberSDR base URL (default: http://ubersdr:8080)
 #   PASS           Bypass password
 #   STATION        Comma-separated station IDs           e.g. 1,2,3
 #   SYSTEM_TABLE   Path to system table inside container
