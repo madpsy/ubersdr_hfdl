@@ -327,6 +327,10 @@ func (c *client) checkConnection() (bool, error) {
 // runOnce performs one connection attempt.  Returns true if the caller should
 // reconnect, false if it should exit cleanly.
 func (c *client) runOnce() (reconnect bool) {
+	// Generate a fresh UUID for every connection attempt so the UberSDR server
+	// never sees the same session ID twice (even across reconnects).
+	c.sessionID = uuid.New().String()
+
 	allowed, err := c.checkConnection()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -440,10 +444,9 @@ func (c *client) runOnce() (reconnect bool) {
 				continue
 			}
 			switch m.Type {
-			case "error":
-				fmt.Fprintf(os.Stderr, "server error: %s\n", m.Error)
-				c.running = false
-				return false
+				case "error":
+					fmt.Fprintf(os.Stderr, "server error: %s\n", m.Error)
+					return c.autoReconnect
 			case "status":
 				fmt.Fprintf(os.Stderr, "status: session=%s freq=%d mode=%s\n",
 					m.SessionID, m.Frequency, m.Mode)
