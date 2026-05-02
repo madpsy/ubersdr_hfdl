@@ -93,6 +93,7 @@ RUN apt-get update && \
         libsoapysdr0.8 \
         libfec0 \
         ca-certificates \
+        wget \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -r -s /bin/false hfdl
 
@@ -125,8 +126,7 @@ USER hfdl
 # Expose the web statistics server port (default; override with WEB_PORT env var)
 EXPOSE 6090
 
-# hfdl_launcher is a long-running supervisor; verify it can print help
-HEALTHCHECK --interval=60s --timeout=5s --retries=3 \
-    CMD ["/usr/local/bin/hfdl_launcher", "-help"] || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/usr/bin/wget", "-q", "-O", "/dev/null", "http://localhost:6090/"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
