@@ -23,6 +23,12 @@ services:
       # IQ_RECORD_SECONDS: "30"
     networks:
       - sdr-network
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: "127.0.0.1:24224"
+        fluentd-async: "true"
+        tag: "hfdl"
 
 networks:
   sdr-network:
