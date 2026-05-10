@@ -7,13 +7,14 @@
 # Usage:
 #   ./docker.sh [build|push|run|arm64]
 #
-#   build  — build the image for linux/amd64 (default)
-#   arm64  — build the image for linux/arm64 (Raspberry Pi, Apple Silicon, etc.)
-#   push   — build then push to registry (set IMAGE env var)
+#   build  — build the image for linux/amd64 locally (default)
+#   arm64  — build the image for linux/arm64 locally
+#   push   — build both linux/amd64 AND linux/arm64 via buildx and push a
+#             multi-arch manifest to the registry, then commit & push git
 #   run    — run the image (set env vars below)
 #
 # Environment variables (build):
-#   IMAGE              Docker image name/tag        (default: hfdl_launcher:latest)
+#   IMAGE              Docker image name/tag        (default: madpsy/ubersdr_hfdl:latest)
 #   PLATFORM           Docker --platform flag       (default: linux/amd64)
 #   DUMPHFDL_VERSION   dumphfdl git branch/tag      (default: master)
 #   LIBACARS_VERSION   libacars release version     (default: 2.2.1)
@@ -27,6 +28,9 @@ PLATFORM="${PLATFORM:-linux/amd64}"
 DUMPHFDL_VERSION="${DUMPHFDL_VERSION:-master}"
 LIBACARS_VERSION="${LIBACARS_VERSION:-2.2.1}"
 
+# Name of the buildx builder used for multi-arch builds
+BUILDER_NAME="ubersdr_hfdl_builder"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -37,35 +41,66 @@ check_deps() {
     command -v docker >/dev/null || die "docker not found in PATH"
 }
 
-build() {
-    check_deps
+# Ensure a buildx builder that supports multi-arch exists and is active.
+ensure_builder() {
+    if ! docker buildx inspect "$BUILDER_NAME" &>/dev/null; then
+        echo "Creating buildx builder '$BUILDER_NAME'..."
+        docker buildx create --name "$BUILDER_NAME" --driver docker-container --bootstrap
+    fi
+    docker buildx use "$BUILDER_NAME"
+}
 
-    # Create a temporary build context from the source tree only
+# Stage the build context into a temp directory (strips host binaries / .git).
+stage_context() {
     TMPCTX="$(mktemp -d)"
     trap 'rm -rf "$TMPCTX"' EXIT
-
     echo "Staging build context in $TMPCTX..."
-
-    # Copy source tree (excluding built binaries at the root only)
     rsync -a --exclude='/ubersdr_iq' --exclude='/hfdl_launcher' \
               --exclude='.git' \
               "$SCRIPT_DIR/" "$TMPCTX/"
+}
+
+# ---------------------------------------------------------------------------
+# build — single-platform local load (amd64 by default, arm64 via arm64 cmd)
+# ---------------------------------------------------------------------------
+
+build() {
+    check_deps
+    stage_context
 
     echo "Building image $IMAGE (platform=$PLATFORM)..."
-    docker build \
+    ensure_builder
+    docker buildx build \
         --platform "$PLATFORM" \
         --tag "$IMAGE" \
         --build-arg "DUMPHFDL_VERSION=${DUMPHFDL_VERSION}" \
         --build-arg "LIBACARS_VERSION=${LIBACARS_VERSION}" \
+        --load \
         "$TMPCTX"
 
     echo "Built: $IMAGE"
 }
 
+# ---------------------------------------------------------------------------
+# push — multi-arch build (amd64 + arm64) pushed directly to registry
+# ---------------------------------------------------------------------------
+
 push() {
-    build
-    echo "Pushing $IMAGE..."
-    docker push "$IMAGE"
+    check_deps
+    stage_context
+    ensure_builder
+
+    echo "Building and pushing multi-arch image $IMAGE (linux/amd64,linux/arm64)..."
+    docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --tag "$IMAGE" \
+        --build-arg "DUMPHFDL_VERSION=${DUMPHFDL_VERSION}" \
+        --build-arg "LIBACARS_VERSION=${LIBACARS_VERSION}" \
+        --push \
+        "$TMPCTX"
+
+    echo "Pushed multi-arch manifest: $IMAGE"
+
     echo "Committing and pushing git repository..."
     git add -A
     git diff --cached --quiet || git commit -m "Release $IMAGE"
