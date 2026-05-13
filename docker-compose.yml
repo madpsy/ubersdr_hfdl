@@ -3,6 +3,7 @@ services:
     container_name: hfdl
     image: madpsy/ubersdr_hfdl:latest
     restart: unless-stopped
+    cpu_shares: 512
     environment:
       # Extra arguments forwarded to dumphfdl (after --)
       EXTRA_ARGS: ""
