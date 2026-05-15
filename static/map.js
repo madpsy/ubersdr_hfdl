@@ -385,6 +385,80 @@ let showPlanes    = true;
 let showArcLayer  = true;
 let autoFit       = true;
 
+// ---- localStorage persistence for layer / band checkboxes ------------------
+const LAYER_STORAGE_KEY = 'hfdl_layer_prefs';
+const BAND_STORAGE_KEY  = 'hfdl_band_prefs';
+
+/**
+ * Persist the current layer checkbox states to localStorage.
+ * Called whenever any layer checkbox changes.
+ */
+function saveLayerPrefs() {
+  try {
+    localStorage.setItem(LAYER_STORAGE_KEY, JSON.stringify({
+      gs:          showGSMarkers,
+      planes:      showPlanes,
+      labels:      showAcLabels,
+      greyline:    showGreyline,
+      arc:         showArcLayer,
+      propagation: showPropagationLayer,
+      autofit:     autoFit,
+    }));
+  } catch (_) { /* storage unavailable — ignore */ }
+}
+
+/**
+ * Restore layer checkbox states from localStorage.
+ * Mutates the module-level variables so initLayerControl() picks them up.
+ * Called once, before initLayerControl().
+ */
+function loadLayerPrefs() {
+  try {
+    const raw = localStorage.getItem(LAYER_STORAGE_KEY);
+    if (!raw) return;
+    const p = JSON.parse(raw);
+    if (typeof p.gs          === 'boolean') showGSMarkers       = p.gs;
+    if (typeof p.planes      === 'boolean') showPlanes          = p.planes;
+    if (typeof p.labels      === 'boolean') showAcLabels        = p.labels;
+    if (typeof p.greyline    === 'boolean') showGreyline        = p.greyline;
+    if (typeof p.arc         === 'boolean') showArcLayer        = p.arc;
+    if (typeof p.propagation === 'boolean') showPropagationLayer = p.propagation;
+    if (typeof p.autofit     === 'boolean') autoFit             = p.autofit;
+  } catch (_) { /* corrupt storage — ignore */ }
+}
+
+/**
+ * Persist the current band filter + live-activity toggle to localStorage.
+ * Called whenever any band checkbox or the Live toggle changes.
+ */
+function saveBandPrefs() {
+  try {
+    localStorage.setItem(BAND_STORAGE_KEY, JSON.stringify({
+      live:   showLiveActivity,
+      filter: freqBandFilter,
+    }));
+  } catch (_) { /* storage unavailable — ignore */ }
+}
+
+/**
+ * Restore band filter states from localStorage.
+ * Mutates freqBandFilter and showLiveActivity.
+ * Called once, before the first renderFreqBandControl().
+ */
+function loadBandPrefs() {
+  try {
+    const raw = localStorage.getItem(BAND_STORAGE_KEY);
+    if (!raw) return;
+    const p = JSON.parse(raw);
+    if (typeof p.live === 'boolean') showLiveActivity = p.live;
+    if (p.filter && typeof p.filter === 'object') {
+      for (const [band, val] of Object.entries(p.filter)) {
+        if (typeof val === 'boolean') freqBandFilter[parseInt(band, 10)] = val;
+      }
+    }
+  } catch (_) { /* corrupt storage — ignore */ }
+}
+
 // ---- Coverage arc layer ----------------------------------------------------
 let arcLayer = null; // L.polygon drawn from receiver showing bearing/distance coverage
 
@@ -670,12 +744,14 @@ function renderFreqBandControl() {
           showLiveActivity = e.target.checked;
           const wrap = liveActivityControl && liveActivityControl.getContainer();
           if (wrap) wrap.style.display = showLiveActivity ? '' : 'none';
+          saveBandPrefs();
           return;
         }
         if (!e.target.classList.contains('freqband-cb')) return;
         const band = parseInt(e.target.dataset.band, 10);
         freqBandFilter[band] = e.target.checked;
         applyBandFilter();
+        saveBandPrefs();
       });
 
       // Single delegated click listener for All / None buttons.
@@ -686,6 +762,7 @@ function renderFreqBandControl() {
         for (const band of Object.keys(freqBandFilter)) freqBandFilter[band] = enable;
         applyBandFilter();
         renderFreqBandControl();
+        saveBandPrefs();
       });
 
       return div;
@@ -1116,57 +1193,66 @@ function initLayerControl() {
     L.DomEvent.disableClickPropagation(div);
     L.DomEvent.disableScrollPropagation(div);
 
+    // Use the (possibly localStorage-restored) variable values for initial checked state
+    const chk = (v) => v ? 'checked' : '';
     div.innerHTML =
       `<div class="map-layer-ctrl__title">Layers</div>` +
       `<label class="map-layer-ctrl__row">` +
-        `<input type="checkbox" id="lyr-gs" checked>` +
+        `<input type="checkbox" id="lyr-gs" ${chk(showGSMarkers)}>` +
         `<span>Ground stations</span>` +
       `</label>` +
       `<label class="map-layer-ctrl__row">` +
-        `<input type="checkbox" id="lyr-planes" checked>` +
+        `<input type="checkbox" id="lyr-planes" ${chk(showPlanes)}>` +
         `<span>Planes</span>` +
       `</label>` +
       `<label class="map-layer-ctrl__row">` +
-        `<input type="checkbox" id="lyr-labels">` +
+        `<input type="checkbox" id="lyr-labels" ${chk(showAcLabels)}>` +
         `<span>Plane labels</span>` +
       `</label>` +
       `<label class="map-layer-ctrl__row">` +
-        `<input type="checkbox" id="lyr-greyline" checked>` +
+        `<input type="checkbox" id="lyr-greyline" ${chk(showGreyline)}>` +
         `<span>Grey line</span>` +
       `</label>` +
       `<label class="map-layer-ctrl__row">` +
-        `<input type="checkbox" id="lyr-arc" checked>` +
+        `<input type="checkbox" id="lyr-arc" ${chk(showArcLayer)}>` +
         `<span>Coverage arc</span>` +
       `</label>` +
       `<label class="map-layer-ctrl__row">` +
-        `<input type="checkbox" id="lyr-propagation">` +
+        `<input type="checkbox" id="lyr-propagation" ${chk(showPropagationLayer)}>` +
         `<span>Propagation paths</span>` +
       `</label>` +
       `<label class="map-layer-ctrl__row">` +
-        `<input type="checkbox" id="lyr-autofit" checked>` +
+        `<input type="checkbox" id="lyr-autofit" ${chk(autoFit)}>` +
         `<span>Auto fit</span>` +
       `</label>`;
 
     div.querySelector('#lyr-gs').addEventListener('change', e => {
       toggleGSMarkers(e.target.checked);
+      saveLayerPrefs();
     });
     div.querySelector('#lyr-planes').addEventListener('change', e => {
       togglePlanes(e.target.checked);
+      saveLayerPrefs();
     });
     div.querySelector('#lyr-labels').addEventListener('change', e => {
       toggleAcLabels(e.target.checked);
+      saveLayerPrefs();
     });
     div.querySelector('#lyr-greyline').addEventListener('change', e => {
       toggleGreyline(e.target.checked);
+      saveLayerPrefs();
     });
     div.querySelector('#lyr-arc').addEventListener('change', e => {
       toggleArcLayer(e.target.checked);
+      saveLayerPrefs();
     });
     div.querySelector('#lyr-propagation').addEventListener('change', e => {
       togglePropagationLayer(e.target.checked);
+      saveLayerPrefs();
     });
     div.querySelector('#lyr-autofit').addEventListener('change', e => {
       autoFit = e.target.checked;
+      saveLayerPrefs();
       if (autoFit) fitToVisibleAircraft();
     });
 
@@ -1720,6 +1806,10 @@ function initAircraftPanel() {
 }
 
 function initMap() {
+  // Restore persisted checkbox states before any layer/band logic runs
+  loadLayerPrefs();
+  loadBandPrefs();
+
   hfdlMap = L.map('map', {
     center: [30, 0],
     zoom: 3,
@@ -1727,9 +1817,6 @@ function initMap() {
   });
   // Re-add zoom control — positioned via CSS to sit centred at the top of the map
   L.control.zoom({ position: 'topleft' }).addTo(hfdlMap);
-
-  // Apply default layer states that differ from the CSS baseline
-  // (plane labels are off by default)
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -1739,13 +1826,19 @@ function initMap() {
   // Click on the map background deselects
   hfdlMap.on('click', () => deselectAircraft());
 
-  // Apply the default "labels off" state to the map container
-  hfdlMap.getContainer().classList.add('hide-ac-labels');
+  // Apply restored (or default) label visibility to the map container
+  if (showAcLabels) {
+    hfdlMap.getContainer().classList.remove('hide-ac-labels');
+  } else {
+    hfdlMap.getContainer().classList.add('hide-ac-labels');
+  }
+
+  // Apply restored greyline state (updateGreyline adds to map only when showGreyline is true)
+  updateGreyline();
 
   loadAircraft();
   loadGSMarkers();
   setInterval(loadGSMarkers, 30_000);
-  updateGreyline();
   setInterval(updateGreyline, 60_000);
   // Refresh propagation paths every 30 s when the layer is visible
   setInterval(() => { if (showPropagationLayer) updatePropagationLayer(); }, 30_000);
@@ -1764,7 +1857,12 @@ function initMap() {
     return div;
   };
   liveActivityControl.addTo(hfdlMap);
+  // Apply restored live-activity visibility
+  if (!showLiveActivity) liveActivityControl.getContainer().style.display = 'none';
   renderLiveActivity();
+
+  // If propagation layer was restored as visible, kick off the first fetch
+  if (showPropagationLayer) updatePropagationLayer();
 
   // Start the live-activity ticker
   setInterval(tickLiveActivity, ACTIVITY_TICK_MS);
