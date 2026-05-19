@@ -90,8 +90,22 @@ var (
 	photoCache    = newLRUCache(1000, 10*time.Minute) // planespotters photo result
 )
 
-// apiClient is an http.Client with a short timeout for external API calls.
-var apiClient = &http.Client{Timeout: 2 * time.Second}
+// uaTransport injects a descriptive User-Agent on every outbound API request.
+// planespotters.net (and other APIs) reject generic Go/library defaults.
+type uaTransport struct{ base http.RoundTripper }
+
+func (t *uaTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("User-Agent", "ubersdr_hfdl/1.0 (+https://github.com/madpsy/ubersdr_hfdl)")
+	return t.base.RoundTrip(r)
+}
+
+// apiClient is an http.Client with a short timeout and descriptive User-Agent
+// for external API calls (planespotters, adsbdb, hexdb).
+var apiClient = &http.Client{
+	Timeout:   2 * time.Second,
+	Transport: &uaTransport{base: http.DefaultTransport},
+}
 
 // aircraftEnrichment is the unified response returned by /aircraft/{icao}.
 type aircraftEnrichment struct {
