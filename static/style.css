@@ -2095,14 +2095,80 @@ td.empty {
 .err-mid  { color: var(--yellow); }
 .err-high { color: var(--red); }
 
-/* ---- Map search bar overlay ---- */
+/* ---- Map top bar (view toggle + search, centred) ---- */
 
-#map-search-bar {
+#map-top-bar {
   position: absolute;
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: all;
+}
+
+/* View toggle button */
+.map-view-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  transition: border-color 0.15s, color 0.15s;
+  line-height: 1.4;
+}
+
+.map-view-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Globe sub-controls — below the top bar, centred, hidden by default */
+#globe-controls {
+  position: absolute;
+  top: 54px; /* 12px top + ~34px bar height + 8px gap */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  pointer-events: all;
+}
+
+#globe-controls.globe-controls--visible {
+  display: flex;
+}
+
+/* Spin button active state */
+.toolbar-btn.spin-active {
+  box-shadow: 0 0 0 1px var(--accent);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Globe container — same footprint as #map, hidden by default */
+#globe-container {
+  position: absolute;
+  inset: 0;
+  display: none;
+  background: #000;
+}
+
+#globe-container.globe-visible {
+  display: block;
+}
+
+/* ---- Map search bar overlay ---- */
+
+#map-search-bar {
+  /* positioning now handled by #map-top-bar parent */
   display: flex;
   align-items: center;
   gap: 4px;

@@ -1846,6 +1846,10 @@ function initMap() {
   initMapSearch();
   initAircraftPanel();
 
+  // Wire the map/globe view toggle button
+  const mapViewToggle = document.getElementById('map-view-toggle');
+  if (mapViewToggle) mapViewToggle.addEventListener('click', toggleMapView);
+
   // Live-activity overlay — topleft, below the recent-positions history panel.
   // Created here so Leaflet inserts it after historyControl (which is added
   // lazily on first position event) — the CSS margin-top handles the gap.
@@ -2094,6 +2098,9 @@ function upsertMarker(ac, fromSSE = false) {
   renderFreqBandControl();
   renderDistanceStats();
 
+  // Keep globe in sync when it's visible
+  if (globeMode && globe) renderGlobe();
+
   // Auto-fit: only trigger on live SSE updates, and only when nothing is selected.
   // When an aircraft is selected the user has intentionally zoomed in — don't override that.
   if (fromSSE && autoFit && !selectedKey && selectedGS === null) fitToVisibleAircraft();
@@ -2295,6 +2302,9 @@ function handlePurgeEvent(key) {
     renderLegend();
     renderFreqBandControl();
     renderDistanceStats();
+
+    // Keep globe in sync when it's visible
+    if (globeMode && globe) renderGlobe();
   }
 }
 
@@ -2341,6 +2351,304 @@ function showMapNotification(type, label) {
   }, 3000);
 }
 
+// ---- 3D Globe view ---------------------------------------------------------
+
+// State
+let globe            = null;   // globe.gl instance
+let globeMode        = false;  // true when showing globe instead of Leaflet
+let globeSpinning    = false;
+let globeSpinInterval = null;
+let globeUserInteracting = false;
+
+// Theme → texture URL map (same CDN that globe.gl uses internally)
+const GLOBE_THEMES = {
+  'blue-marble': '//unpkg.com/three-globe/example/img/earth-blue-marble.jpg',
+  'night':       '//unpkg.com/three-globe/example/img/earth-night.jpg',
+  'day':         '//unpkg.com/three-globe/example/img/earth-day.jpg',
+  'dark':        '//unpkg.com/three-globe/example/img/earth-dark.jpg',
+  'topology':    '//unpkg.com/three-globe/example/img/earth-topology.png',
+};
+
+/**
+ * Build the HTML string for a plane icon on the globe — identical markup to
+ * makePlaneIcon() so the aircraft look exactly the same as on the Leaflet map.
+ */
+function makeGlobePlaneEl(ac) {
+  const labelText = ac.flight || ac.reg || ac.icao || ac.key || '';
+  const bearing   = ac.bearing || 0;
+  const colour    = gsColorFor(ac.gs_id);
+  const el = document.createElement('div');
+  el.className = 'ac-marker';
+  el.style.color = colour;
+  el.style.position = 'relative';
+  el.style.pointerEvents = 'auto';
+  el.style.cursor = 'pointer';
+  el.innerHTML =
+    `<span style="display:inline-block;transform:rotate(${bearing - 90}deg);font-size:22px;text-shadow:0 0 6px rgba(0,0,0,0.9)">✈</span>` +
+    (labelText
+      ? `<div class="ac-label">${esc(labelText.toUpperCase())}</div>`
+      : '');
+  return el;
+}
+
+/**
+ * Build the HTML element for a GS marker on the globe.
+ */
+function makeGlobeGSEl(gs) {
+  const colour  = gsColorFor(gs.gs_id);
+  const opacity = (gs.last_heard && gs.last_heard > 0) ? 1.0 : gs.spdu_active ? 0.7 : 0.25;
+  const el = document.createElement('div');
+  el.className = 'gs-marker';
+  el.style.color   = colour;
+  el.style.opacity = opacity;
+  el.style.pointerEvents = 'auto';
+  el.style.cursor = 'pointer';
+  el.innerHTML =
+    `<span style="font-size:20px">📡</span>` +
+    `<div class="gs-marker__label">${esc(gs.location)}</div>`;
+  return el;
+}
+
+/**
+ * Rebuild the globe's htmlElementsData from the current aircraftData + gsDataMap.
+ * Called on every SSE update when in globe mode.
+ */
+function renderGlobe() {
+  if (!globe) return;
+
+  // Aircraft HTML elements
+  const acPoints = Object.values(aircraftData)
+    .filter(ac => ac.lat && ac.lon)
+    .map(ac => ({
+      lat:  ac.lat,
+      lng:  ac.lon,
+      ac,
+    }));
+
+  // GS HTML elements
+  const gsPoints = Object.values(gsDataMap)
+    .filter(gs => gs.lat && gs.lon)
+    .map(gs => ({
+      lat: gs.lat,
+      lng: gs.lon,
+      gs,
+    }));
+
+  // Arcs: GS → aircraft (reuse gsColorFor, same as propagation layer)
+  const arcs = Object.values(aircraftData)
+    .filter(ac => ac.lat && ac.lon && ac.gs_id && gsDataMap[ac.gs_id])
+    .map(ac => {
+      const gs = gsDataMap[ac.gs_id];
+      return {
+        startLat: gs.lat,
+        startLng: gs.lon,
+        endLat:   ac.lat,
+        endLng:   ac.lon,
+        color:    gsColorFor(ac.gs_id),
+      };
+    });
+
+  globe
+    .htmlElementsData([...acPoints, ...gsPoints])
+    .htmlElement(d => {
+      if (d.ac) return makeGlobePlaneEl(d.ac);
+      if (d.gs) return makeGlobeGSEl(d.gs);
+      return null;
+    })
+    .htmlLat(d => d.lat)
+    .htmlLng(d => d.lng)
+    .arcsData(arcs)
+    .arcColor(d => d.color)
+    .arcAltitude(0.15)
+    .arcStroke(0.5)
+    .arcDashLength(0.4)
+    .arcDashGap(0.2)
+    .arcDashAnimateTime(2000);
+}
+
+/**
+ * Initialise the globe.gl instance inside #globe-container.
+ * Called lazily the first time the user switches to globe mode.
+ */
+function initGlobe() {
+  if (globe) return; // already initialised
+
+  const container = document.getElementById('globe-container');
+  if (!container || typeof Globe === 'undefined') return;
+
+  // Restore persisted theme
+  const savedTheme = localStorage.getItem('hfdl_globe_theme') || 'blue-marble';
+  const themeSelect = document.getElementById('globe-theme-select');
+  if (themeSelect) themeSelect.value = savedTheme;
+
+  globe = Globe()(container)
+    .globeImageUrl(GLOBE_THEMES[savedTheme] || GLOBE_THEMES['blue-marble'])
+    .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
+    .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
+    .showAtmosphere(true)
+    .atmosphereColor('#1a3a6b')
+    .atmosphereAltitude(0.15)
+    .width(container.clientWidth)
+    .height(container.clientHeight)
+    // Arc layer defaults (overridden in renderGlobe)
+    .arcsData([])
+    .arcColor('color')
+    .arcAltitude(0.15)
+    .arcStroke(0.5)
+    .arcDashLength(0.4)
+    .arcDashGap(0.2)
+    .arcDashAnimateTime(2000)
+    // HTML elements layer
+    .htmlElementsData([])
+    .htmlElement(() => null)
+    .htmlLat('lat')
+    .htmlLng('lng');
+
+  // Set initial point of view
+  globe.pointOfView({ lat: 30, lng: 0, altitude: 2.5 });
+
+  // Detect user interaction — mousedown permanently stops spin
+  const canvas = container.querySelector('canvas');
+  if (canvas) {
+    canvas.addEventListener('mousedown', () => {
+      globeUserInteracting = true;
+      stopGlobeSpin();
+    });
+    canvas.addEventListener('mouseup', () => {
+      globeUserInteracting = false;
+      // Spin stays stopped — user must click the button to restart
+    });
+    canvas.addEventListener('touchstart', () => {
+      globeUserInteracting = true;
+      stopGlobeSpin();
+    }, { passive: true });
+    canvas.addEventListener('touchend', () => {
+      globeUserInteracting = false;
+    }, { passive: true });
+  }
+
+  // Resize globe when container changes size
+  const resizeObserver = new ResizeObserver(() => {
+    if (!globe) return;
+    globe.width(container.clientWidth).height(container.clientHeight);
+  });
+  resizeObserver.observe(container);
+
+  // Wire theme select
+  if (themeSelect) {
+    themeSelect.addEventListener('change', (e) => {
+      const theme = e.target.value;
+      localStorage.setItem('hfdl_globe_theme', theme);
+      if (globe) globe.globeImageUrl(GLOBE_THEMES[theme] || GLOBE_THEMES['blue-marble']);
+    });
+  }
+
+  // Wire spin button
+  const spinBtn = document.getElementById('globe-spin-btn');
+  if (spinBtn) {
+    spinBtn.addEventListener('click', () => {
+      if (globeSpinning) {
+        stopGlobeSpin();
+      } else {
+        startGlobeSpin();
+      }
+    });
+  }
+
+  // Populate with current data and start spinning
+  renderGlobe();
+  startGlobeSpin();
+}
+
+function startGlobeSpin() {
+  if (globeSpinning || !globe) return;
+  globeSpinning = true;
+  updateSpinBtn();
+  const spinSpeed = 0.08; // degrees per frame (~5°/sec at 60 fps)
+  const spin = () => {
+    if (!globeSpinning || globeUserInteracting) return;
+    const pov = globe.pointOfView();
+    globe.pointOfView({ lat: pov.lat, lng: pov.lng + spinSpeed, altitude: pov.altitude }, 0);
+    globeSpinInterval = requestAnimationFrame(spin);
+  };
+  globeSpinInterval = requestAnimationFrame(spin);
+}
+
+function stopGlobeSpin() {
+  globeSpinning = false;
+  if (globeSpinInterval) {
+    cancelAnimationFrame(globeSpinInterval);
+    globeSpinInterval = null;
+  }
+  updateSpinBtn();
+}
+
+function updateSpinBtn() {
+  const btn = document.getElementById('globe-spin-btn');
+  if (!btn) return;
+  if (globeSpinning) {
+    btn.textContent = '⏸ Spin';
+    btn.title = 'Stop globe spin';
+    btn.classList.add('spin-active');
+  } else {
+    btn.textContent = '⟳ Spin';
+    btn.title = 'Start globe spin';
+    btn.classList.remove('spin-active');
+  }
+}
+
+function setGlobeTheme(name) {
+  if (!globe) return;
+  globe.globeImageUrl(GLOBE_THEMES[name] || GLOBE_THEMES['blue-marble']);
+}
+
+/**
+ * Toggle between flat Leaflet map and 3D globe.
+ * Lazily initialises the globe on first switch.
+ */
+function toggleMapView() {
+  globeMode = !globeMode;
+
+  const mapEl      = document.getElementById('map');
+  const globeEl    = document.getElementById('globe-container');
+  const controls   = document.getElementById('globe-controls');
+  const toggleBtn  = document.getElementById('map-view-toggle');
+  const searchBar  = document.getElementById('map-search-bar');
+
+  if (globeMode) {
+    // Switch to globe
+    if (mapEl)    mapEl.style.display    = 'none';
+    if (globeEl)  globeEl.classList.add('globe-visible');
+    if (controls) controls.classList.add('globe-controls--visible');
+    if (toggleBtn) {
+      toggleBtn.textContent = '🗺 Flat Map';
+      toggleBtn.title = 'Switch to flat map view';
+    }
+    // Hide search bar — not useful in globe mode
+    if (searchBar) searchBar.style.display = 'none';
+
+    // Lazily create the globe, then populate it
+    initGlobe();
+    if (globe) renderGlobe();
+  } else {
+    // Switch back to flat map
+    if (mapEl)    mapEl.style.display    = '';
+    if (globeEl)  globeEl.classList.remove('globe-visible');
+    if (controls) controls.classList.remove('globe-controls--visible');
+    if (toggleBtn) {
+      toggleBtn.textContent = '🌍 3D Globe';
+      toggleBtn.title = 'Switch to 3D Globe view';
+    }
+    if (searchBar) searchBar.style.display = '';
+
+    // Stop spin while the globe is hidden
+    stopGlobeSpin();
+
+    // Leaflet needs a size invalidation after being hidden
+    if (hfdlMap) setTimeout(() => hfdlMap.invalidateSize(), 50);
+  }
+}
+
 // ---- Utility ---------------------------------------------------------------
 
 function esc(str) {
@@ -2369,9 +2677,20 @@ function pulseMarker(key) {
   });
 }
 
-// Invalidate map size when the map tab becomes visible
+// Invalidate map size when the map tab becomes visible;
+// pause globe spin when the tab is hidden.
 document.addEventListener('tabchange', (e) => {
-  if (e.detail === 'map' && hfdlMap) {
-    setTimeout(() => hfdlMap.invalidateSize(), 50);
+  if (e.detail === 'map') {
+    if (!globeMode && hfdlMap) {
+      setTimeout(() => hfdlMap.invalidateSize(), 50);
+    }
+    if (globeMode && globe) {
+      // Resize in case the container changed while hidden
+      const container = document.getElementById('globe-container');
+      if (container) globe.width(container.clientWidth).height(container.clientHeight);
+    }
+  } else {
+    // Leaving the map tab — pause spin to save CPU
+    if (globeSpinning) stopGlobeSpin();
   }
 });

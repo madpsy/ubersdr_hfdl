@@ -45,10 +45,29 @@
     <!-- Map tab -->
     <section id="tab-map" class="tab-panel active">
       <div id="map"></div>
-      <div id="map-search-bar">
-        <input type="text" id="map-search" class="map-search-input" placeholder="🔍 ICAO / Reg / Flight…" autocomplete="off" />
-        <button id="map-search-clear" class="map-search-clear" title="Clear search">✕</button>
+      <div id="globe-container"></div>
+
+      <!-- Top-centre bar: view toggle + search -->
+      <div id="map-top-bar">
+        <button id="map-view-toggle" class="map-view-btn" title="Switch to 3D Globe view">🌍 3D Globe</button>
+        <div id="map-search-bar">
+          <input type="text" id="map-search" class="map-search-input" placeholder="🔍 ICAO / Reg / Flight…" autocomplete="off" />
+          <button id="map-search-clear" class="map-search-clear" title="Clear search">✕</button>
+        </div>
       </div>
+
+      <!-- Globe sub-controls — only visible in globe mode -->
+      <div id="globe-controls">
+        <button id="globe-spin-btn" class="toolbar-btn">⟳ Spin</button>
+        <select id="globe-theme-select" class="filter-select">
+          <option value="blue-marble" selected>Blue Marble</option>
+          <option value="night">Night (City Lights)</option>
+          <option value="day">Day</option>
+          <option value="dark">Dark</option>
+          <option value="topology">Topology</option>
+        </select>
+      </div>
+
       <div id="map-ra-alert" hidden>
         <button id="map-ra-alert-close" title="Dismiss">✕</button>
         <div id="map-ra-alert-body"></div>
@@ -423,6 +442,8 @@
 
   </main>
 
+  <!-- globe.gl (CDN) — loaded before map.js so Globe() is available -->
+  <script src="https://unpkg.com/globe.gl@2.30.0/dist/globe.gl.min.js"></script>
   <!-- Leaflet JS (CDN) -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <!-- Chart.js (CDN) -->
