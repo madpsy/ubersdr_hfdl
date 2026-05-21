@@ -714,6 +714,18 @@ func startWebServer(port int, staticDir string, store *statsStore, instances []*
 		}
 	})
 
+	// /propagation/grid — pre-binned 2°×2° signal grid for the heatmap/contour
+	// renderer.  Much smaller than the raw /propagation samples (~2–10 KB vs
+	// ~1.2 MB) because samples are averaged into spatial cells per band.
+	mux.HandleFunc("/propagation/grid", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		grid := store.gridSnapshot()
+		if err := json.NewEncoder(w).Encode(grid); err != nil {
+			log.Printf("web: /propagation/grid encode error: %v", err)
+		}
+	})
+
 	// /weather — ACARS label H1/WX weather message ring buffer
 	mux.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

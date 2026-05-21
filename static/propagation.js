@@ -5,7 +5,7 @@
    view modes driven by real HFNPDU type-213 data:
 
    1. Heatmap  — per-band IDW-interpolated signal-strength tiles
-   2. Contours — iso-signal lines at −20 / −35 / −50 dBFS
+   2. Contours — iso-signal lines at −45 / −60 / −75 dBFS
    3. Polar    — per-GS polar heatmap (bearing × distance sectors)
 
    Data source: GET /propagation  (PropPath[] with ac_lat/ac_lon added)
@@ -33,9 +33,9 @@ let _pathLayer     = null;
 let _gsLayer       = null;
 let _greylineLayer = null;
 
-// Layer visibility
-let _showPaths    = true;
-let _showGS       = true;
+// Layer visibility — paths and GS markers off by default to keep the map clean
+let _showPaths    = false;
+let _showGS       = false;
 let _showGreyline = true;
 
 // Matrix filter state (reused from old propagation.js)
@@ -51,7 +51,12 @@ const GRID_DEG   = 2.0;   // IDW grid cell size in degrees
 const IDW_RADIUS = 15;    // max search radius in degrees (~1500 km)
 const IDW_POWER  = 2;     // IDW power parameter
 
-const CONTOUR_LEVELS = [-20, -35, -50]; // dBFS thresholds
+// HFDL signal levels are typically −40 to −80 dBFS.
+// Contour levels chosen to bracket the useful reception range:
+//   −45 dBFS = strong (good copy)
+//   −60 dBFS = moderate (reliable)
+//   −75 dBFS = weak (marginal)
+const CONTOUR_LEVELS = [-45, -60, -75]; // dBFS thresholds
 
 const POLAR_SECTORS = 36;                          // 10° per sector
 const POLAR_RINGS   = [500, 1500, 3000, 5000, 8000]; // outer edge km
@@ -76,10 +81,16 @@ function escProp(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// sigColour maps a dBFS value to an RGBA colour string.
+// HFDL signals are typically −40 to −80 dBFS:
+//   ≥ −45  strong (green)
+//   ≥ −60  moderate (amber)
+//   ≥ −75  weak (orange)
+//   <  −75 very weak (red)
 function sigColour(dbfs, alpha) {
-  if (dbfs >= -20) return `rgba(63,185,80,${alpha})`;
-  if (dbfs >= -35) return `rgba(227,179,65,${alpha})`;
-  if (dbfs >= -50) return `rgba(240,136,62,${alpha})`;
+  if (dbfs >= -45) return `rgba(63,185,80,${alpha})`;
+  if (dbfs >= -60) return `rgba(227,179,65,${alpha})`;
+  if (dbfs >= -75) return `rgba(240,136,62,${alpha})`;
   return `rgba(248,81,73,${alpha})`;
 }
 
@@ -167,17 +178,32 @@ function buildIDWGrid(samples) {
 
 // ── Heatmap layer ─────────────────────────────────────────────────────────────
 
-function buildHeatmapLayer(paths) {
+// buildHeatmapLayer uses the dense SigSample ring-buffer (snap.samples) when
+// buildHeatmapLayer accepts GridCell[] from /propagation/grid (preferred) or
+// falls back to PropPath positions when no grid data is available.
+// GridCell fields: lat, lon, band_mhz, freq_khz, sig_level, count
+function buildHeatmapLayer(paths, gridCells) {
   if (!_heatLayer) _heatLayer = L.layerGroup();
   _heatLayer.clearLayers();
 
-  // Group samples by band
+  // Group pre-binned cells by band.
   const bandGroups = {};
-  for (const p of pathsWithPos(paths)) {
-    const band = mhzBand(p.freq_khz);
-    if (_propBand !== 'all' && band !== parseInt(_propBand, 10)) continue;
-    if (!bandGroups[band]) bandGroups[band] = [];
-    bandGroups[band].push({ lat: p.ac_lat, lon: p.ac_lon, value: p.sig_level });
+
+  if (gridCells && gridCells.length > 0) {
+    for (const c of gridCells) {
+      const band = c.band_mhz;
+      if (_propBand !== 'all' && band !== parseInt(_propBand, 10)) continue;
+      if (!bandGroups[band]) bandGroups[band] = [];
+      bandGroups[band].push({ lat: c.lat, lon: c.lon, value: c.sig_level });
+    }
+  } else {
+    // Fallback: derive from PropPath positions (sparse, single-freq per path)
+    for (const p of pathsWithPos(paths)) {
+      const band = mhzBand(p.freq_khz);
+      if (_propBand !== 'all' && band !== parseInt(_propBand, 10)) continue;
+      if (!bandGroups[band]) bandGroups[band] = [];
+      bandGroups[band].push({ lat: p.ac_lat, lon: p.ac_lon, value: p.sig_level });
+    }
   }
 
   const step = GRID_DEG;
@@ -195,8 +221,10 @@ function buildHeatmapLayer(paths) {
         const lat    = latMin + r * step;
         const lon    = lonMin + c * step;
         const bounds = [[lat, lon], [lat + step, lon + step]];
-        // Opacity encodes signal strength; colour encodes band
-        const alpha  = Math.max(0.05, Math.min(0.70, (v + 60) / 40));
+        // Opacity encodes signal strength; colour encodes band.
+        // HFDL range: −80 dBFS (weak) → −45 dBFS (strong)
+        // Map to opacity 0.05 (barely visible) → 0.70 (solid)
+        const alpha  = Math.max(0.05, Math.min(0.70, (v + 80) / 35));
 
         const rect = L.rectangle(bounds, {
           color:       'transparent',
@@ -288,20 +316,30 @@ function marchingSquares(grid, rows, cols, latMin, lonMin, step, threshold) {
   return segments;
 }
 
-function buildContourLayer(paths) {
+// buildContourLayer uses pre-binned GridCell[] from /propagation/grid when available.
+function buildContourLayer(paths, gridCells) {
   if (!_contourLayer) _contourLayer = L.layerGroup();
   _contourLayer.clearLayers();
 
-  const filtered = pathsWithPos(filterByBand(paths));
-  if (filtered.length < 3) return _contourLayer;
+  let idwSamples;
+  if (gridCells && gridCells.length > 0) {
+    const filtered = _propBand === 'all'
+      ? gridCells
+      : gridCells.filter(c => c.band_mhz === parseInt(_propBand, 10));
+    if (filtered.length < 3) return _contourLayer;
+    idwSamples = filtered.map(c => ({ lat: c.lat, lon: c.lon, value: c.sig_level }));
+  } else {
+    const filtered = pathsWithPos(filterByBand(paths));
+    if (filtered.length < 3) return _contourLayer;
+    idwSamples = filtered.map(p => ({ lat: p.ac_lat, lon: p.ac_lon, value: p.sig_level }));
+  }
+  const { grid, latMin, lonMin, rows, cols, step } = buildIDWGrid(idwSamples);
 
-  const samples = filtered.map(p => ({ lat: p.ac_lat, lon: p.ac_lon, value: p.sig_level }));
-  const { grid, latMin, lonMin, rows, cols, step } = buildIDWGrid(samples);
-
+  // Keys must match CONTOUR_LEVELS exactly
   const levelStyles = {
-    [-20]: { color: '#3fb950', weight: 2,   opacity: 0.9, label: '−20 dBFS (strong)' },
-    [-35]: { color: '#e3b341', weight: 1.5, opacity: 0.8, label: '−35 dBFS (ok)' },
-    [-50]: { color: '#f85149', weight: 1,   opacity: 0.7, label: '−50 dBFS (weak)' },
+    [-45]: { color: '#3fb950', weight: 2,   opacity: 0.9, label: '−45 dBFS (strong)' },
+    [-60]: { color: '#e3b341', weight: 1.5, opacity: 0.8, label: '−60 dBFS (moderate)' },
+    [-75]: { color: '#f85149', weight: 1,   opacity: 0.7, label: '−75 dBFS (weak)' },
   };
 
   for (const level of CONTOUR_LEVELS) {
@@ -323,7 +361,12 @@ function buildContourLayer(paths) {
 
 // ── Polar heatmap layer ───────────────────────────────────────────────────────
 
-function buildPolarLayer(paths, gsID) {
+// buildPolarLayer renders a polar heatmap centred on the selected GS.
+// It uses gridCells (from /propagation/grid) as the sample source — computing
+// bearing and distance from the GS to each cell centre.  This gives far more
+// data than the old PropPath-only approach (which required rare type-213 msgs).
+// Falls back to PropPath positions if no grid cells are available.
+function buildPolarLayer(paths, gsID, gridCells) {
   if (!_polarLayer) _polarLayer = L.layerGroup();
   _polarLayer.clearLayers();
 
@@ -335,26 +378,45 @@ function buildPolarLayer(paths, gsID) {
   const gsLat = gsData.lat;
   const gsLon = gsData.lon;
 
-  const gsPaths = paths.filter(p => p.gs_id === gsID && p.ac_lat && p.ac_lon);
-  if (gsPaths.length === 0) return _polarLayer;
-
   const sectorDeg = 360 / POLAR_SECTORS;
-  // grid[sector][ring] = {sum, count}
-  const grid = Array.from({ length: POLAR_SECTORS }, () =>
+  // polarGrid[sector][ring] = {sum, count}
+  const polarGrid = Array.from({ length: POLAR_SECTORS }, () =>
     Array.from({ length: POLAR_RINGS.length }, () => ({ sum: 0, count: 0 }))
   );
 
-  for (const p of gsPaths) {
-    const dist   = haversineKm(gsLat, gsLon, p.ac_lat, p.ac_lon);
-    const bear   = bearingDeg(gsLat, gsLon, p.ac_lat, p.ac_lon);
-    const sector = Math.floor(bear / sectorDeg) % POLAR_SECTORS;
-    let ring = POLAR_RINGS.length - 1;
-    for (let i = 0; i < POLAR_RINGS.length; i++) {
-      if (dist <= POLAR_RINGS[i]) { ring = i; break; }
+  // Use dense grid cells if available, otherwise fall back to PropPath positions
+  if (gridCells && gridCells.length > 0) {
+    for (const c of gridCells) {
+      const dist   = haversineKm(gsLat, gsLon, c.lat, c.lon);
+      const bear   = bearingDeg(gsLat, gsLon, c.lat, c.lon);
+      const sector = Math.floor(bear / sectorDeg) % POLAR_SECTORS;
+      let ring = POLAR_RINGS.length - 1;
+      for (let i = 0; i < POLAR_RINGS.length; i++) {
+        if (dist <= POLAR_RINGS[i]) { ring = i; break; }
+      }
+      // Weight by sample count so cells with more observations dominate
+      polarGrid[sector][ring].sum   += c.sig_level * c.count;
+      polarGrid[sector][ring].count += c.count;
     }
-    grid[sector][ring].sum   += p.sig_level;
-    grid[sector][ring].count += 1;
+  } else {
+    const gsPaths = paths.filter(p => p.gs_id === gsID && p.ac_lat && p.ac_lon);
+    if (gsPaths.length === 0) return _polarLayer;
+    for (const p of gsPaths) {
+      const dist   = haversineKm(gsLat, gsLon, p.ac_lat, p.ac_lon);
+      const bear   = bearingDeg(gsLat, gsLon, p.ac_lat, p.ac_lon);
+      const sector = Math.floor(bear / sectorDeg) % POLAR_SECTORS;
+      let ring = POLAR_RINGS.length - 1;
+      for (let i = 0; i < POLAR_RINGS.length; i++) {
+        if (dist <= POLAR_RINGS[i]) { ring = i; break; }
+      }
+      polarGrid[sector][ring].sum   += p.sig_level;
+      polarGrid[sector][ring].count += 1;
+    }
   }
+
+  // Check if we have any data at all
+  const hasData = polarGrid.some(s => s.some(r => r.count > 0));
+  if (!hasData) return _polarLayer;
 
   const STEPS = 8; // arc interpolation steps per sector edge
 
@@ -363,7 +425,7 @@ function buildPolarLayer(paths, gsID) {
     const bearEnd   = bearStart + sectorDeg;
 
     for (let r = 0; r < POLAR_RINGS.length; r++) {
-      const cell = grid[s][r];
+      const cell = polarGrid[s][r];
       if (cell.count === 0) continue;
       const avg     = cell.sum / cell.count;
       const innerKm = r === 0 ? 0 : POLAR_RINGS[r - 1];
@@ -550,20 +612,20 @@ function renderPropLegend() {
     }
     html += '<div class="prop-legend__divider"></div>';
     html += '<div class="prop-legend__title">Opacity = signal</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="opacity:0.70;background:#888"></span>Strong (&gt;−20 dBFS)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="opacity:0.40;background:#888"></span>OK (−20 to −35)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="opacity:0.20;background:#888"></span>Weak (&lt;−35 dBFS)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="opacity:0.70;background:#888"></span>Strong (&gt;−45 dBFS)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="opacity:0.40;background:#888"></span>OK (−45 to −60)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="opacity:0.20;background:#888"></span>Weak (&lt;−60 dBFS)</div>';
   } else if (_propMode === 'contours') {
     html += '<div class="prop-legend__title">Contour levels</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#3fb950"></span>−20 dBFS (strong)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#e3b341"></span>−35 dBFS (ok)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#f85149"></span>−50 dBFS (weak)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#3fb950"></span>−45 dBFS (strong)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#e3b341"></span>−60 dBFS (moderate)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#f85149"></span>−75 dBFS (weak)</div>';
   } else if (_propMode === 'polar') {
     html += '<div class="prop-legend__title">Signal level</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(63,185,80,0.55)"></span>Strong (&gt;−20 dBFS)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(227,179,65,0.55)"></span>OK (−20 to −35)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(240,136,62,0.55)"></span>Marginal (−35 to −50)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(248,81,73,0.55)"></span>Weak (&lt;−50 dBFS)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(63,185,80,0.55)"></span>Strong (&gt;−45 dBFS)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(227,179,65,0.55)"></span>OK (−45 to −60)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(240,136,62,0.55)"></span>Marginal (−60 to −75)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(248,81,73,0.55)"></span>Weak (&lt;−75 dBFS)</div>';
   }
 
   html += '</div>';
@@ -584,11 +646,18 @@ function renderPropLegend() {
 
 let _propSampleControl = null;
 
-function renderPropSampleCount(paths) {
+function renderPropSampleCount(paths, gridSnap) {
   if (!propMap) return;
-  const withPos = pathsWithPos(filterByBand(paths));
+  // Show raw sample count from grid metadata if available, else path count
+  const sampleCount = gridSnap && gridSnap.sample_n != null
+    ? gridSnap.sample_n
+    : pathsWithPos(filterByBand(paths)).length;
+  const cellCount = gridSnap && gridSnap.cells ? gridSnap.cells.length : 0;
   const total   = paths.length;
-  const html    = `<div class="prop-sample-count">${withPos.length} samples · ${total} paths · Updated ${new Date().toUTCString().replace('GMT','UTC').replace(/.*(\d{2}:\d{2}:\d{2}).*/, '$1 UTC')}</div>`;
+  const countStr = gridSnap
+    ? `${sampleCount} samples → ${cellCount} cells · ${total} paths`
+    : `${sampleCount} samples · ${total} paths`;
+  const html    = `<div class="prop-sample-count">${countStr} · Updated ${new Date().toUTCString().replace('GMT','UTC').replace(/.*(\d{2}:\d{2}:\d{2}).*/, '$1 UTC')}</div>`;
 if (!_propSampleControl) {
   _propSampleControl = L.control({ position: 'bottomleft' });
   _propSampleControl.onAdd = function () {
@@ -613,9 +682,13 @@ if (el) {
 
 // ── Main render dispatcher ────────────────────────────────────────────────────
 
-function renderPropMap(snap) {
+// _propGridSnap caches the last /propagation/grid response
+let _propGridSnap = null;
+
+function renderPropMap(snap, gridSnap) {
 if (!propMap || !snap || !snap.paths) return;
-const paths = snap.paths;
+const paths     = snap.paths;
+const gridCells = gridSnap && gridSnap.cells ? gridSnap.cells : [];
 
 // Always rebuild path lines (they respect band filter)
 buildPathLayer(paths);
@@ -628,18 +701,18 @@ if (_contourLayer && propMap.hasLayer(_contourLayer)) _contourLayer.remove();
 if (_polarLayer   && propMap.hasLayer(_polarLayer))   _polarLayer.remove();
 
 if (_propMode === 'heatmap') {
-  buildHeatmapLayer(paths);
+  buildHeatmapLayer(paths, gridCells);
   if (_heatLayer) _heatLayer.addTo(propMap);
 } else if (_propMode === 'contours') {
-  buildContourLayer(paths);
+  buildContourLayer(paths, gridCells);
   if (_contourLayer) _contourLayer.addTo(propMap);
 } else if (_propMode === 'polar') {
-  buildPolarLayer(paths, _propGSID);
+  buildPolarLayer(paths, _propGSID, gridCells);
   if (_polarLayer) _polarLayer.addTo(propMap);
 }
 
 renderPropLegend();
-renderPropSampleCount(paths);
+renderPropSampleCount(paths, gridSnap);
 setPropMapUpdated();
 
 // Also refresh the matrix below the map
@@ -649,14 +722,17 @@ renderPropagationTab(snap);
 
 // ── Data fetch ────────────────────────────────────────────────────────────────
 
+// fetchAndRenderPropMap fetches /propagation (matrix + paths) and
+// /propagation/grid (pre-binned heatmap cells) in parallel, then renders.
 function fetchAndRenderPropMap() {
-fetch(BASE_PATH + '/propagation')
-  .then(r => r.json())
-  .then(snap => {
-    _propLastSnap = snap;
-    renderPropMap(snap);
-  })
-  .catch(err => console.warn('prop map fetch error:', err));
+Promise.all([
+  fetch(BASE_PATH + '/propagation').then(r => r.json()),
+  fetch(BASE_PATH + '/propagation/grid').then(r => r.json()),
+]).then(([snap, gridSnap]) => {
+  _propLastSnap  = snap;
+  _propGridSnap  = gridSnap;
+  renderPropMap(snap, gridSnap);
+}).catch(err => console.warn('prop map fetch error:', err));
 }
 
 // ── Map initialisation (lazy — called on first tab activation) ────────────────
@@ -713,7 +789,7 @@ document.querySelectorAll('.prop-mode-btn').forEach(btn => {
     if (bandGroup) bandGroup.style.display = _propMode === 'polar' ? 'none' : '';
     if (gsGroup)   gsGroup.style.display   = _propMode === 'polar' ? '' : 'none';
 
-    if (_propLastSnap) renderPropMap(_propLastSnap);
+    if (_propLastSnap) renderPropMap(_propLastSnap, _propGridSnap);
   });
 });
 
@@ -722,7 +798,7 @@ const bandSel = document.getElementById('prop-band-select');
 if (bandSel) {
   bandSel.addEventListener('change', () => {
     _propBand = bandSel.value;
-    if (_propLastSnap) renderPropMap(_propLastSnap);
+    if (_propLastSnap) renderPropMap(_propLastSnap, _propGridSnap);
   });
 }
 
@@ -731,7 +807,7 @@ const gsSel = document.getElementById('prop-gs-select');
 if (gsSel) {
   gsSel.addEventListener('change', () => {
     _propGSID = gsSel.value ? parseInt(gsSel.value, 10) : null;
-    if (_propLastSnap) renderPropMap(_propLastSnap);
+    if (_propLastSnap) renderPropMap(_propLastSnap, _propGridSnap);
   });
 }
 
@@ -914,6 +990,7 @@ if (!_propMapInited) {
 function onPropagationUpdate(snap) {
 if (!_propMapInited) return; // tab not yet opened
 _propLastSnap = snap;
-renderPropMap(snap);
+// Use cached grid snap — the map's own 60s timer will refresh both together
+renderPropMap(snap, _propGridSnap);
 }
 

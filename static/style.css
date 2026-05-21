@@ -2943,7 +2943,7 @@ td.empty {
 .prop-tab-panel {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;   /* allow the whole tab to scroll so the matrix is reachable */
 }
 
 /* ---- Map toolbar ---- */
@@ -3157,8 +3157,7 @@ td.empty {
 /* ---- Matrix section below map ---- */
 
 .prop-matrix-section {
-  flex: 1;
-  overflow: auto;
+  /* No overflow:auto here — the parent .prop-tab-panel scrolls instead */
   border-top: 1px solid var(--border);
 }
 

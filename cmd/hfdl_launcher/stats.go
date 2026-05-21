@@ -201,6 +201,7 @@ func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
 
 const maxRecentMessages = 200
 const maxRecentEvents = 200
+const maxSigSamples = 20000 // rolling ring buffer for propagation heatmap
 
 // ---------------------------------------------------------------------------
 // JSON message types (subset of dumphfdl's decoded:json output)
@@ -605,6 +606,10 @@ type statsStore struct {
 	// Phase 4a: propagation paths from freq_data[]
 	// key: "acKey:gsID" → PropPath
 	propagation map[string]*PropPath
+	// sigSamples: rolling ring buffer of raw signal observations from every
+	// positioned aircraft message.  Provides a dense point cloud for the
+	// propagation heatmap (far more data than PropPath alone).
+	sigSamples []SigSample
 	// recentEvents: ring buffer of gs_event entries for page-load seeding
 	recentEvents []gsEvent
 	// acBuckets: 30-min unique-aircraft count history (same cadence as SigBucket)
@@ -673,6 +678,21 @@ func (s *statsStore) recordAcBucket(acKey string, now int64) {
 func isValidPos(lat, lon float64) bool {
 	return !(math.Abs(lat) > 90 || math.Abs(lon) > 180 ||
 		(lat == 180 && lon == 180) || (lat == 0 && lon == 0))
+}
+
+// recordSigSample appends a signal observation to the rolling ring buffer.
+// Must be called with s.mu held (write lock).
+func (s *statsStore) recordSigSample(lat, lon float64, freqKHz int64, sigLevel float64, t int64) {
+	s.sigSamples = append(s.sigSamples, SigSample{
+		Lat:      lat,
+		Lon:      lon,
+		FreqKHz:  freqKHz,
+		SigLevel: sigLevel,
+		Time:     t,
+	})
+	if len(s.sigSamples) > maxSigSamples {
+		s.sigSamples = s.sigSamples[len(s.sigSamples)-maxSigSamples:]
+	}
 }
 
 // ingest parses one JSON line from dumphfdl and updates the stats store.
@@ -849,6 +869,8 @@ func (s *statsStore) ingest(line string) {
 								}
 								// Record in activity bucket — only aircraft with a valid position
 								s.recordAcBucket(l16AcKey, now)
+								// Record signal sample for propagation heatmap
+								s.recordSigSample(l16Lat, l16Lon, freqKHz, h.SigLevel, now)
 							}
 							if l16Alt > 0 {
 								ac.AltFt = l16Alt
@@ -906,6 +928,8 @@ func (s *statsStore) ingest(line string) {
 								}
 								// Record in activity bucket — only aircraft with a valid position
 								s.recordAcBucket(posAcKey, now)
+								// Record signal sample for propagation heatmap
+								s.recordSigSample(parsedLat, parsedLon, freqKHz, h.SigLevel, now)
 							}
 							if parsedAlt > 0 {
 								ac.AltFt = parsedAlt
@@ -1178,6 +1202,8 @@ func (s *statsStore) ingest(line string) {
 					}
 					// Record in activity bucket — only aircraft with a valid position
 					s.recordAcBucket(acKey, now)
+					// Record signal sample for propagation heatmap
+					s.recordSigSample(lat, lon, freqKHz, h.SigLevel, h.T.Sec)
 					posUpdate = ac
 				}
 			}
@@ -1437,7 +1463,81 @@ func (s *statsStore) propagationSnapshot() PropSnapshot {
 		}
 		return paths[i].GSID < paths[j].GSID
 	})
-	return PropSnapshot{Paths: paths, ByGS: byGS, ByAircraft: byAC}
+	// Copy the signal sample ring buffer so the caller gets a stable snapshot.
+	samples := make([]SigSample, len(s.sigSamples))
+	copy(samples, s.sigSamples)
+	return PropSnapshot{Paths: paths, ByGS: byGS, ByAircraft: byAC, Samples: samples}
+}
+
+// gridSnapshot bins the sigSamples ring buffer into 2°×2° cells per band and
+// returns a compact GridSnapshot suitable for the /propagation/grid endpoint.
+// The payload is typically 2–10 KB vs ~1.2 MB for the raw samples.
+func (s *statsStore) gridSnapshot() GridSnapshot {
+	const cellDeg = 2.0
+
+	s.mu.RLock()
+	n := len(s.sigSamples)
+	samples := make([]SigSample, n)
+	copy(samples, s.sigSamples)
+	s.mu.RUnlock()
+
+	type cellKey struct {
+		latBin, lonBin, band int
+	}
+	type cellAcc struct {
+		sigSum   float64
+		count    int
+		freqKHz  int64
+		freqHist map[int64]int // freq_khz → count, to pick most common
+	}
+
+	cells := make(map[cellKey]*cellAcc)
+
+	for _, ss := range samples {
+		if ss.Lat < -90 || ss.Lat > 90 || ss.Lon < -180 || ss.Lon > 180 {
+			continue
+		}
+		band := int(ss.FreqKHz / 1000)
+		latBin := int(math.Floor(ss.Lat / cellDeg)) // e.g. lat 51.5 → bin 25
+		lonBin := int(math.Floor(ss.Lon / cellDeg))
+		k := cellKey{latBin, lonBin, band}
+		acc := cells[k]
+		if acc == nil {
+			acc = &cellAcc{freqHist: make(map[int64]int)}
+			cells[k] = acc
+		}
+		acc.sigSum += ss.SigLevel
+		acc.count++
+		acc.freqHist[ss.FreqKHz]++
+	}
+
+	out := make([]GridCell, 0, len(cells))
+	for k, acc := range cells {
+		// Pick the most-common frequency in this cell as representative
+		bestFreq := int64(0)
+		bestCnt := 0
+		for f, c := range acc.freqHist {
+			if c > bestCnt {
+				bestCnt = c
+				bestFreq = f
+			}
+		}
+		out = append(out, GridCell{
+			Lat:      float64(k.latBin)*cellDeg + cellDeg/2,
+			Lon:      float64(k.lonBin)*cellDeg + cellDeg/2,
+			FreqKHz:  bestFreq,
+			BandMHz:  k.band,
+			SigLevel: acc.sigSum / float64(acc.count),
+			Count:    acc.count,
+		})
+	}
+
+	return GridSnapshot{
+		Cells:     out,
+		CellDeg:   cellDeg,
+		SampleN:   n,
+		UpdatedAt: time.Now().Unix(),
+	}
 }
 
 const aircraftMaxAgeSecs = 30 * 60        // 30 minutes
