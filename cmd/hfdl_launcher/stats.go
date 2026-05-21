@@ -980,6 +980,18 @@ func (s *statsStore) ingest(line string) {
 						mergedFromKey = oldKey
 						// Re-point acKey so the rest of ingest updates the merged entry
 						acKey = icao
+						// Re-key any propagation entries that used the old callsign/reg
+						// key so they don't linger as duplicates until the 3-hour purge.
+						oldPrefix := oldKey + ":"
+						for propKey, pp := range s.propagation {
+							if strings.HasPrefix(propKey, oldPrefix) {
+								newPropKey := icao + ":" + propKey[len(oldPrefix):]
+								pp.AircraftKey = icao
+								pp.ICAO = icao
+								s.propagation[newPropKey] = pp
+								delete(s.propagation, propKey)
+							}
+						}
 						break
 					}
 				}
