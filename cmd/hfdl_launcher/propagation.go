@@ -49,6 +49,12 @@ type PropPath struct {
 	FreqKHz     int64   `json:"freq_khz"`  // best/last heard frequency
 	SigLevel    float64 `json:"sig_level"` // dBFS
 	LastSeen    int64   `json:"last_seen"` // unix seconds
+	// Aircraft position at time of last freq_data report.
+	// Populated server-side in propagationSnapshot() by joining against
+	// statsStore.aircraft so the frontend can place signal samples on a map
+	// without a client-side join (which would miss aircraft older than 30 min).
+	AcLat float64 `json:"ac_lat,omitempty"`
+	AcLon float64 `json:"ac_lon,omitempty"`
 }
 
 // PropSnapshot is the full propagation payload served at GET /propagation.

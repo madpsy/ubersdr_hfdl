@@ -250,14 +250,78 @@
       <div id="lq-content"></div>
     </section>
 
-    <!-- Propagation tab (Phase 4) -->
-    <section id="tab-propagation" class="tab-panel">
-      <div class="tab-toolbar">
-        <input type="text" id="prop-filter" class="filter-input" placeholder="ICAO / Reg / Flight…" />
-        <button id="prop-filter-clear" class="toolbar-btn">✕ Clear</button>
-        <span id="prop-count-label" class="filter-count"></span>
+    <!-- Propagation tab (Phase 4 / visual rewrite) -->
+    <section id="tab-propagation" class="tab-panel prop-tab-panel">
+
+      <!-- ── Map toolbar ─────────────────────────────────────────────── -->
+      <div class="prop-map-toolbar">
+        <!-- View mode -->
+        <div class="prop-toolbar-group">
+          <label class="prop-toolbar-label">View</label>
+          <div class="prop-mode-btns">
+            <button class="prop-mode-btn prop-mode-btn--active" data-mode="heatmap">🌡 Heatmap</button>
+            <button class="prop-mode-btn" data-mode="contours">〰 Contours</button>
+            <button class="prop-mode-btn" data-mode="polar">📡 Polar</button>
+          </div>
+        </div>
+
+        <!-- Band selector (heatmap / contours) -->
+        <div class="prop-toolbar-group" id="prop-band-group">
+          <label class="prop-toolbar-label" for="prop-band-select">Band</label>
+          <select id="prop-band-select" class="prop-select">
+            <option value="all">All bands</option>
+            <option value="3">3 MHz</option>
+            <option value="5">5 MHz</option>
+            <option value="6">6 MHz</option>
+            <option value="8">8 MHz</option>
+            <option value="10">10 MHz</option>
+            <option value="11">11 MHz</option>
+            <option value="13">13 MHz</option>
+            <option value="15">15 MHz</option>
+            <option value="17">17 MHz</option>
+            <option value="21">21 MHz</option>
+          </select>
+        </div>
+
+        <!-- GS selector (polar mode) -->
+        <div class="prop-toolbar-group" id="prop-gs-group" style="display:none">
+          <label class="prop-toolbar-label" for="prop-gs-select">Ground Station</label>
+          <select id="prop-gs-select" class="prop-select">
+            <option value="">— select GS —</option>
+          </select>
+        </div>
+
+        <!-- Layer toggles -->
+        <div class="prop-toolbar-group">
+          <label class="prop-toolbar-label">Layers</label>
+          <label class="prop-layer-toggle"><input type="checkbox" id="prop-lyr-paths" checked> Paths</label>
+          <label class="prop-layer-toggle"><input type="checkbox" id="prop-lyr-gs" checked> GS markers</label>
+          <label class="prop-layer-toggle"><input type="checkbox" id="prop-lyr-greyline" checked> Grey line</label>
+        </div>
+
+        <!-- Refresh -->
+        <div class="prop-toolbar-group prop-toolbar-group--right">
+          <span id="prop-map-updated" class="prop-map-updated"></span>
+          <button id="prop-refresh-btn" class="toolbar-btn">↺ Refresh</button>
+        </div>
       </div>
-      <div id="propagation-grid"></div>
+
+      <!-- ── Propagation map ─────────────────────────────────────────── -->
+      <div id="prop-map"></div>
+
+      <!-- ── Signal matrix (below map) ──────────────────────────────── -->
+      <div class="prop-matrix-section">
+        <div class="prop-matrix-header">
+          <span class="prop-matrix-title">Signal Matrix</span>
+          <div class="prop-matrix-filter-row">
+            <input type="text" id="prop-filter" class="filter-input" placeholder="ICAO / Reg / Flight…" />
+            <button id="prop-filter-clear" class="toolbar-btn">✕ Clear</button>
+            <span id="prop-count-label" class="filter-count"></span>
+          </div>
+        </div>
+        <div id="propagation-grid"></div>
+      </div>
+
     </section>
 
     <!-- Planes tab -->
@@ -368,7 +432,7 @@
   <script src="{{.BasePath}}/app.js?v=3"></script>
   <script src="{{.BasePath}}/map.js?v=9"></script>
   <script src="{{.BasePath}}/network.js?v=1"></script>
-  <script src="{{.BasePath}}/propagation.js?v=1"></script>
+  <script src="{{.BasePath}}/propagation.js?v=2"></script>
   <script src="{{.BasePath}}/linkquality.js?v=1"></script>
 </body>
 </html>

@@ -1420,6 +1420,13 @@ func (s *statsStore) propagationSnapshot() PropSnapshot {
 
 	for _, pp := range s.propagation {
 		cp := *pp
+		// Join aircraft position so the frontend can place signal samples on a
+		// map without a client-side join (which would miss aircraft older than
+		// the 30-min aircraft TTL while prop paths survive 3 hours).
+		if ac, ok := s.aircraft[pp.AircraftKey]; ok && isValidPos(ac.Lat, ac.Lon) {
+			cp.AcLat = ac.Lat
+			cp.AcLon = ac.Lon
+		}
 		paths = append(paths, cp)
 		byGS[pp.GSID] = append(byGS[pp.GSID], pp.AircraftKey)
 		byAC[pp.AircraftKey] = append(byAC[pp.AircraftKey], pp.GSID)

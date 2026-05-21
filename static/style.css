@@ -2307,11 +2307,6 @@ td.empty {
 
 /* ---- Propagation tab ---- */
 
-#propagation-grid {
-  padding: 12px 16px;
-  overflow: auto;
-}
-
 .prop-summary {
   display: flex;
   align-items: center;
@@ -2937,4 +2932,264 @@ td.empty {
 .ac-panel__data dt.ac-panel--hidden,
 .ac-panel__data dd.ac-panel--hidden {
   display: none;
+}
+
+/* ==========================================================================
+   Propagation tab — visual map rewrite
+   ========================================================================== */
+
+/* ---- Tab panel layout ---- */
+
+.prop-tab-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- Map toolbar ---- */
+
+.prop-map-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.prop-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.prop-toolbar-group--right {
+  margin-left: auto;
+  gap: 10px;
+}
+
+.prop-toolbar-label {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Mode buttons */
+.prop-mode-btns {
+  display: flex;
+  gap: 2px;
+}
+
+.prop-mode-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.prop-mode-btn:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+
+.prop-mode-btn--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Band / GS selects */
+.prop-select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.prop-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Layer toggles */
+.prop-layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.prop-layer-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Updated timestamp */
+.prop-map-updated {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ---- Propagation map ---- */
+
+#prop-map {
+  height: 420px;
+  flex-shrink: 0;
+  background: #0d1117;
+  z-index: 0;
+}
+
+/* ---- Map tooltip ---- */
+
+.prop-map-tooltip {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text) !important;
+  font-size: 12px !important;
+  padding: 4px 8px !important;
+  border-radius: 4px !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4) !important;
+}
+
+/* ---- Legend control ---- */
+
+.prop-legend {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  min-width: 160px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+.prop-legend__title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 5px;
+}
+
+.prop-legend__divider {
+  border-top: 1px solid var(--border);
+  margin: 6px 0;
+}
+
+.prop-legend__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.prop-legend__swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.prop-legend__line {
+  display: inline-block;
+  width: 20px;
+  height: 3px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+/* ---- Sample count control ---- */
+
+.prop-sample-count {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+
+/* ---- GS markers on prop map ---- */
+
+.prop-gs-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 18px;
+  line-height: 1;
+  cursor: default;
+}
+
+.prop-gs-marker__label {
+  font-size: 9px;
+  color: var(--text);
+  background: rgba(13,17,23,0.75);
+  border-radius: 2px;
+  padding: 1px 3px;
+  white-space: nowrap;
+  margin-top: 1px;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Matrix section below map ---- */
+
+.prop-matrix-section {
+  flex: 1;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+}
+
+.prop-matrix-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.prop-matrix-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.prop-matrix-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+#propagation-grid {
+  padding: 10px 14px;
+  overflow: auto;
 }
