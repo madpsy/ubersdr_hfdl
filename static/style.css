@@ -142,10 +142,11 @@ main {
   overflow: hidden;
 }
 
-/* ---- Zoom control — centred horizontally at the top of the map ---- */
+/* ---- Zoom control — centred horizontally at the top of the MAIN map only ---- */
 
-/* Pull the zoom control out of the topleft corner container and centre it */
-.leaflet-top.leaflet-left .leaflet-control-zoom {
+/* Pull the zoom control out of the topleft corner container and centre it.
+   Scoped to #map so the propagation map keeps a normal top-left zoom control. */
+#map .leaflet-top.leaflet-left .leaflet-control-zoom {
   position: absolute;
   top: 8px;
   left: 50%;
@@ -156,9 +157,9 @@ main {
   flex-direction: row;
 }
 
-/* Remove the vertical border between stacked buttons; add a vertical one */
-.leaflet-control-zoom-in,
-.leaflet-control-zoom-out {
+/* Remove the vertical border between stacked buttons on the main map; add a vertical one */
+#map .leaflet-control-zoom-in,
+#map .leaflet-control-zoom-out {
   border-bottom: none !important;
   border-right: 1px solid rgba(255,255,255,0.15) !important;
   border-radius: 0 !important;
@@ -167,11 +168,11 @@ main {
   line-height: 30px !important;
 }
 
-.leaflet-control-zoom-in {
+#map .leaflet-control-zoom-in {
   border-radius: 4px 0 0 4px !important;
 }
 
-.leaflet-control-zoom-out {
+#map .leaflet-control-zoom-out {
   border-right: none !important;
   border-radius: 0 4px 4px 0 !important;
 }
@@ -3105,6 +3106,21 @@ td.empty {
   gap: 6px;
   color: var(--text);
   margin-bottom: 3px;
+  font-size: 11px;
+}
+
+.prop-legend__row--click:hover {
+  background: var(--hover, rgba(255,255,255,0.06));
+  border-radius: 3px;
+}
+
+.prop-legend__hint {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.7;
 }
 
 .prop-legend__swatch {

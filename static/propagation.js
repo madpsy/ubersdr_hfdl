@@ -38,6 +38,10 @@ let _showPaths    = false;
 let _showGS       = false;
 let _showGreyline = true;
 
+// Legend toggle state — clicking a legend item hides/shows that band or level
+const _hiddenBands  = new Set(); // band MHz numbers (integers) hidden in heatmap
+const _hiddenLevels = new Set(); // contour dBFS levels hidden in contours view
+
 // Matrix filter state (reused from old propagation.js)
 let propFilterTerm = '';
 let _propLastData  = null;
@@ -210,14 +214,16 @@ function buildHeatmapLayer(paths, gridCells, rawSamples) {
     // Best: pre-binned server-side cells (already averaged, use as-is)
     for (const c of gridCells) {
       if (_propBand !== 'all' && c.band_mhz !== parseInt(_propBand, 10)) continue;
+      if (_hiddenBands.has(c.band_mhz)) continue;
       addToBin(c.lat, c.lon, c.band_mhz, c.sig_level, c.freq_khz);
     }
   } else if (rawSamples && rawSamples.length > 0) {
     // Good: raw ring-buffer samples — bin client-side
     for (const s of rawSamples) {
-      if (!s.lat || !s.lon || !s.sig_level) continue;
+      if (s.lat == null || s.lon == null || !s.sig_level || !s.freq_khz) continue;
       const band = mhzBand(s.freq_khz);
       if (_propBand !== 'all' && band !== parseInt(_propBand, 10)) continue;
+      if (_hiddenBands.has(band)) continue;
       addToBin(s.lat, s.lon, band, s.sig_level, s.freq_khz);
     }
   } else {
@@ -226,21 +232,26 @@ function buildHeatmapLayer(paths, gridCells, rawSamples) {
       if (!p.sig_level || !p.freq_khz) continue;
       const band = mhzBand(p.freq_khz);
       if (_propBand !== 'all' && band !== parseInt(_propBand, 10)) continue;
+      if (_hiddenBands.has(band)) continue;
       addToBin(p.ac_lat, p.ac_lon, band, p.sig_level, p.freq_khz);
     }
   }
 
   // Render one rectangle per bin.
   // Colour = band (from BAND_COLOURS), opacity = signal strength.
-  // Opacity range: 0.08 (weak, −42 dBFS) → 0.55 (strong, −16 dBFS)
-  // so the map tiles always show through.
-  const SIG_MIN = -42, SIG_MAX = -16; // observed dBFS range
+  // Opacity range: 0.25 (weak) → 0.65 (strong), map always visible underneath.
+  // Signal range auto-detected from the data so it works across different receivers.
+  const sigVals = [...bins.values()].map(b => b.sum / b.count);
+  const sigMin  = sigVals.length ? Math.min(...sigVals) : -42;
+  const sigMax  = sigVals.length ? Math.max(...sigVals) : -16;
+  const sigSpan = sigMax - sigMin || 1; // avoid div-by-zero if all same
+
   for (const b of bins.values()) {
     const avg        = b.sum / b.count;
     const bandColour = BAND_COLOURS[b.band] || '#58a6ff';
-    // Clamp and normalise to [0,1], then scale to opacity range [0.08, 0.55]
-    const t     = Math.max(0, Math.min(1, (avg - SIG_MIN) / (SIG_MAX - SIG_MIN)));
-    const alpha = 0.08 + t * 0.47;
+    // Normalise within the actual data range, then map to [0.25, 0.65]
+    const t     = Math.max(0, Math.min(1, (avg - sigMin) / sigSpan));
+    const alpha = 0.25 + t * 0.40;
     const lat0  = b.latBin * cellDeg;
     const lon0  = b.lonBin * cellDeg;
     const bounds = [[lat0, lon0], [lat0 + cellDeg, lon0 + cellDeg]];
@@ -371,6 +382,7 @@ function buildContourLayer(paths, gridCells, rawSamples) {
   };
 
   for (const level of CONTOUR_LEVELS) {
+    if (_hiddenLevels.has(level)) continue;
     const segs  = marchingSquares(grid, rows, cols, latMin, lonMin, step, level);
     const style = levelStyles[level];
     for (const [a, b] of segs) {
@@ -643,24 +655,35 @@ function renderPropLegend() {
   let html = '<div class="prop-legend">';
 
   if (_propMode === 'heatmap') {
-    html += '<div class="prop-legend__title">Band colour</div>';
+    html += '<div class="prop-legend__title">Band colour <span class="prop-legend__hint">(click to toggle)</span></div>';
     const bands = _propBand === 'all'
       ? Object.keys(BAND_COLOURS).map(Number).sort((a, b) => a - b)
       : [parseInt(_propBand, 10)];
     for (const b of bands) {
-      const c = BAND_COLOURS[b] || '#aaa';
-      html += `<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:${c};opacity:0.55"></span>${b} MHz</div>`;
+      const c       = BAND_COLOURS[b] || '#aaa';
+      const hidden  = _hiddenBands.has(b);
+      const strike  = hidden ? 'text-decoration:line-through;opacity:0.4;' : '';
+      html += `<div class="prop-legend__row prop-legend__row--click" data-toggle-band="${b}" style="${strike}cursor:pointer">` +
+              `<span class="prop-legend__swatch" style="background:${c};opacity:${hidden ? 0.15 : 0.55}"></span>${b} MHz</div>`;
     }
     html += '<div class="prop-legend__divider"></div>';
     html += '<div class="prop-legend__title">Opacity = signal strength</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:#888;opacity:0.55"></span>Strong (−16 dBFS)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:#888;opacity:0.30"></span>Moderate (−30 dBFS)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:#888;opacity:0.08"></span>Weak (−42 dBFS)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:#888;opacity:0.65"></span>Strongest received</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:#888;opacity:0.45"></span>Moderate</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:#888;opacity:0.25"></span>Weakest received</div>';
   } else if (_propMode === 'contours') {
-    html += '<div class="prop-legend__title">Contour levels</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#3fb950"></span>−20 dBFS (strong)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#e3b341"></span>−30 dBFS (moderate)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#f85149"></span>−40 dBFS (weak)</div>';
+    html += '<div class="prop-legend__title">Contour levels <span class="prop-legend__hint">(click to toggle)</span></div>';
+    const contourDefs = [
+      { level: -20, color: '#3fb950', label: '−20 dBFS (strong)' },
+      { level: -30, color: '#e3b341', label: '−30 dBFS (moderate)' },
+      { level: -40, color: '#f85149', label: '−40 dBFS (weak)' },
+    ];
+    for (const { level, color, label } of contourDefs) {
+      const hidden = _hiddenLevels.has(level);
+      const strike = hidden ? 'text-decoration:line-through;opacity:0.4;' : '';
+      html += `<div class="prop-legend__row prop-legend__row--click" data-toggle-level="${level}" style="${strike}cursor:pointer">` +
+              `<span class="prop-legend__line" style="background:${color};opacity:${hidden ? 0.2 : 1}"></span>${label}</div>`;
+    }
   } else if (_propMode === 'polar') {
     html += '<div class="prop-legend__title">Signal level</div>';
     html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(63,185,80,0.55)"></span>Strong (&gt;−20 dBFS)</div>';
@@ -681,6 +704,24 @@ function renderPropLegend() {
     _propLegendControl.addTo(propMap);
   }
   _propLegendControl._div.innerHTML = html;
+
+  // Wire up click handlers for toggleable rows
+  _propLegendControl._div.querySelectorAll('[data-toggle-band]').forEach(el => {
+    el.addEventListener('click', () => {
+      const band = parseInt(el.dataset.toggleBand, 10);
+      if (_hiddenBands.has(band)) _hiddenBands.delete(band);
+      else _hiddenBands.add(band);
+      if (_propLastSnap) renderPropMap(_propLastSnap, _propGridSnap);
+    });
+  });
+  _propLegendControl._div.querySelectorAll('[data-toggle-level]').forEach(el => {
+    el.addEventListener('click', () => {
+      const level = parseInt(el.dataset.toggleLevel, 10);
+      if (_hiddenLevels.has(level)) _hiddenLevels.delete(level);
+      else _hiddenLevels.add(level);
+      if (_propLastSnap) renderPropMap(_propLastSnap, _propGridSnap);
+    });
+  });
 }
 
 // ── Sample count control ──────────────────────────────────────────────────────
@@ -799,12 +840,14 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18,
 }).addTo(propMap);
 
-// Initialise layer groups and add to map
+// Initialise layer groups — only add to map if the toggle is on by default
 _heatLayer    = L.layerGroup();
 _contourLayer = L.layerGroup();
 _polarLayer   = L.layerGroup();
-_pathLayer    = L.layerGroup().addTo(propMap);
-_gsLayer      = L.layerGroup().addTo(propMap);
+_pathLayer    = L.layerGroup();
+_gsLayer      = L.layerGroup();
+if (_showPaths) _pathLayer.addTo(propMap);
+if (_showGS)   _gsLayer.addTo(propMap);
 
 buildGreyline();
 
