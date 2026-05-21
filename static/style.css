@@ -132,6 +132,11 @@ main {
   display: block;
 }
 
+/* Propagation tab uses flex layout — must override the generic active rule */
+.prop-tab-panel.active {
+  display: flex;
+}
+
 /* Map panel — no scroll, Leaflet fills it */
 #tab-map {
   overflow: hidden;
@@ -2941,7 +2946,7 @@ td.empty {
 /* ---- Tab panel layout ---- */
 
 .prop-tab-panel {
-  display: flex;
+  /* display is controlled by .tab-panel (none) / .prop-tab-panel.active (flex) */
   flex-direction: column;
   overflow-y: auto;   /* allow the whole tab to scroll so the matrix is reachable */
 }

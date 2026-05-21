@@ -47,9 +47,10 @@ let _propLastData  = null;
 const PROP_DEG = Math.PI / 180;
 const PROP_RAD = 180 / Math.PI;
 
-const GRID_DEG   = 2.0;   // IDW grid cell size in degrees
-const IDW_RADIUS = 15;    // max search radius in degrees (~1500 km)
-const IDW_POWER  = 2;     // IDW power parameter
+const GRID_DEG        = 2.0;   // IDW grid cell size in degrees (matches /propagation/grid bins)
+const IDW_RADIUS      = 40;    // max search radius in degrees for heatmap IDW (~4000 km)
+const CONTOUR_RADIUS  = 60;    // wider search radius for contour IDW — fills sparse areas
+const IDW_POWER       = 2;     // IDW power parameter
 
 // HFDL signal levels are typically −40 to −80 dBFS.
 // Contour levels chosen to bracket the useful reception range:
@@ -141,7 +142,7 @@ function pathsWithPos(paths) {
 
 // ── IDW interpolation ─────────────────────────────────────────────────────────
 
-function idwAt(lat, lon, samples) {
+function idwAt(lat, lon, samples, radius) {
   let wSum = 0, vSum = 0;
   for (const s of samples) {
     const dLat = lat - s.lat;
@@ -149,7 +150,7 @@ function idwAt(lat, lon, samples) {
     const dist2 = dLat * dLat + dLon * dLon;
     if (dist2 < 1e-10) return s.value; // exact hit
     const distDeg = Math.sqrt(dist2);
-    if (distDeg > IDW_RADIUS) continue;
+    if (distDeg > radius) continue;
     const w = 1 / Math.pow(distDeg, IDW_POWER);
     wSum += w;
     vSum += w * s.value;
@@ -157,7 +158,8 @@ function idwAt(lat, lon, samples) {
   return wSum === 0 ? null : vSum / wSum;
 }
 
-function buildIDWGrid(samples) {
+function buildIDWGrid(samples, radius) {
+  const r0     = radius || IDW_RADIUS;
   const step   = GRID_DEG;
   const latMin = -80, latMax = 80;
   const lonMin = -180, lonMax = 180;
@@ -169,7 +171,7 @@ function buildIDWGrid(samples) {
     const lat = latMin + r * step + step / 2;
     for (let c = 0; c < cols; c++) {
       const lon = lonMin + c * step + step / 2;
-      const v   = idwAt(lat, lon, samples);
+      const v   = idwAt(lat, lon, samples, r0);
       if (v !== null) grid[r * cols + c] = v;
     }
   }
@@ -317,6 +319,7 @@ function marchingSquares(grid, rows, cols, latMin, lonMin, step, threshold) {
 }
 
 // buildContourLayer uses pre-binned GridCell[] from /propagation/grid when available.
+// Uses a wider IDW search radius (CONTOUR_RADIUS) so sparse data still produces contours.
 function buildContourLayer(paths, gridCells) {
   if (!_contourLayer) _contourLayer = L.layerGroup();
   _contourLayer.clearLayers();
@@ -326,14 +329,15 @@ function buildContourLayer(paths, gridCells) {
     const filtered = _propBand === 'all'
       ? gridCells
       : gridCells.filter(c => c.band_mhz === parseInt(_propBand, 10));
-    if (filtered.length < 3) return _contourLayer;
+    if (filtered.length < 1) return _contourLayer;
     idwSamples = filtered.map(c => ({ lat: c.lat, lon: c.lon, value: c.sig_level }));
   } else {
     const filtered = pathsWithPos(filterByBand(paths));
-    if (filtered.length < 3) return _contourLayer;
+    if (filtered.length < 1) return _contourLayer;
     idwSamples = filtered.map(p => ({ lat: p.ac_lat, lon: p.ac_lon, value: p.sig_level }));
   }
-  const { grid, latMin, lonMin, rows, cols, step } = buildIDWGrid(idwSamples);
+  // Use wider radius so sparse samples still fill the IDW grid enough for marching squares
+  const { grid, latMin, lonMin, rows, cols, step } = buildIDWGrid(idwSamples, CONTOUR_RADIUS);
 
   // Keys must match CONTOUR_LEVELS exactly
   const levelStyles = {
@@ -771,6 +775,15 @@ fetchAndRenderPropMap();
 _propRefreshTimer = setInterval(fetchAndRenderPropMap, 60_000);
 // Refresh grey line every 5 min
 setInterval(buildGreyline, 5 * 60_000);
+
+// Invalidate Leaflet size whenever the propagation tab becomes active.
+// Without this, the map renders at 0×0 if it was initialised while hidden,
+// and tiles don't load correctly after switching away and back.
+document.addEventListener('tabchange', (e) => {
+  if (e.detail === 'propagation' && propMap) {
+    setTimeout(() => propMap.invalidateSize(), 0);
+  }
+});
 }
 
 // ── Toolbar event wiring ──────────────────────────────────────────────────────
