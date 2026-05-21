@@ -2102,7 +2102,7 @@ td.empty {
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1000;
+  z-index: 1002;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2135,7 +2135,7 @@ td.empty {
   top: 54px; /* 12px top + ~34px bar height + 8px gap */
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1000;
+  z-index: 1002;
   display: none;
   align-items: center;
   gap: 6px;
@@ -2153,16 +2153,50 @@ td.empty {
   border-color: var(--accent);
 }
 
-/* Globe container — same footprint as #map, hidden by default */
+/* Globe container — same footprint as #map, hidden by default.
+   isolation:isolate creates a new stacking context so the Three.js canvas
+   inside cannot escape and cover sibling overlay elements.
+   z-index:1 keeps the container below the overlay controls (z-index:1002). */
 #globe-container {
   position: absolute;
   inset: 0;
   display: none;
   background: #000;
+  z-index: 1;
+  isolation: isolate;
 }
 
 #globe-container.globe-visible {
   display: block;
+}
+
+/* ---- Globe hover tooltip ---- */
+
+.globe-tooltip {
+  position: fixed;
+  z-index: 9000;
+  pointer-events: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  max-width: 280px;
+  white-space: normal;
+}
+
+.globe-tooltip strong {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.globe-tooltip code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--green);
 }
 
 /* ---- Map search bar overlay ---- */
@@ -2214,7 +2248,7 @@ td.empty {
   top: 58px; /* below the search bar (12px top + ~34px height + 12px gap) */
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1000;
+  z-index: 1002;
   min-width: 320px;
   max-width: 520px;
   background: rgba(13, 17, 23, 0.95);

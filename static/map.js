@@ -2360,6 +2360,38 @@ let globeSpinning    = false;
 let globeSpinInterval = null;
 let globeUserInteracting = false;
 
+// Shared tooltip element for globe hover — created once, reused
+let _globeTooltipEl = null;
+
+function getGlobeTooltip() {
+  if (!_globeTooltipEl) {
+    _globeTooltipEl = document.createElement('div');
+    _globeTooltipEl.className = 'globe-tooltip';
+    _globeTooltipEl.style.display = 'none';
+    document.body.appendChild(_globeTooltipEl);
+
+    // Follow the mouse
+    document.addEventListener('mousemove', (e) => {
+      if (_globeTooltipEl && _globeTooltipEl.style.display !== 'none') {
+        _globeTooltipEl.style.left = (e.clientX + 14) + 'px';
+        _globeTooltipEl.style.top  = (e.clientY - 10) + 'px';
+      }
+    });
+  }
+  return _globeTooltipEl;
+}
+
+function showGlobeTooltip(html) {
+  const el = getGlobeTooltip();
+  el.innerHTML = html;
+  el.style.display = 'block';
+}
+
+function hideGlobeTooltip() {
+  const el = getGlobeTooltip();
+  el.style.display = 'none';
+}
+
 // Theme → texture URL map (same CDN that globe.gl uses internally)
 const GLOBE_THEMES = {
   'blue-marble': '//unpkg.com/three-globe/example/img/earth-blue-marble.jpg',
@@ -2370,8 +2402,9 @@ const GLOBE_THEMES = {
 };
 
 /**
- * Build the HTML string for a plane icon on the globe — identical markup to
+ * Build the HTML element for a plane icon on the globe — identical markup to
  * makePlaneIcon() so the aircraft look exactly the same as on the Leaflet map.
+ * Wires hover (tooltip) and click (ac-panel) events.
  */
 function makeGlobePlaneEl(ac) {
   const labelText = ac.flight || ac.reg || ac.icao || ac.key || '';
@@ -2388,11 +2421,32 @@ function makeGlobePlaneEl(ac) {
     (labelText
       ? `<div class="ac-label">${esc(labelText.toUpperCase())}</div>`
       : '');
+
+  // Hover: show popup-style tooltip
+  el.addEventListener('mouseenter', (e) => {
+    e.stopPropagation();
+    // Use latest data in case it has been updated since the element was created
+    const live = aircraftData[ac.key] || ac;
+    showGlobeTooltip(buildPopup(live));
+  });
+  el.addEventListener('mouseleave', (e) => {
+    e.stopPropagation();
+    hideGlobeTooltip();
+  });
+
+  // Click: open the aircraft detail side panel (same as Leaflet map click)
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    hideGlobeTooltip();
+    selectAircraft(ac.key, false);
+  });
+
   return el;
 }
 
 /**
  * Build the HTML element for a GS marker on the globe.
+ * Wires hover (tooltip) event.
  */
 function makeGlobeGSEl(gs) {
   const colour  = gsColorFor(gs.gs_id);
@@ -2406,6 +2460,19 @@ function makeGlobeGSEl(gs) {
   el.innerHTML =
     `<span style="font-size:20px">📡</span>` +
     `<div class="gs-marker__label">${esc(gs.location)}</div>`;
+
+  // Hover: show GS popup tooltip
+  el.addEventListener('mouseenter', (e) => {
+    e.stopPropagation();
+    const live = gsDataMap[gs.gs_id] || gs;
+    const distKm = distanceToReceiverKm(live.lat, live.lon);
+    showGlobeTooltip(buildGSPopup(live, distKm));
+  });
+  el.addEventListener('mouseleave', (e) => {
+    e.stopPropagation();
+    hideGlobeTooltip();
+  });
+
   return el;
 }
 
@@ -2434,20 +2501,6 @@ function renderGlobe() {
       gs,
     }));
 
-  // Arcs: GS → aircraft (reuse gsColorFor, same as propagation layer)
-  const arcs = Object.values(aircraftData)
-    .filter(ac => ac.lat && ac.lon && ac.gs_id && gsDataMap[ac.gs_id])
-    .map(ac => {
-      const gs = gsDataMap[ac.gs_id];
-      return {
-        startLat: gs.lat,
-        startLng: gs.lon,
-        endLat:   ac.lat,
-        endLng:   ac.lon,
-        color:    gsColorFor(ac.gs_id),
-      };
-    });
-
   globe
     .htmlElementsData([...acPoints, ...gsPoints])
     .htmlElement(d => {
@@ -2456,14 +2509,7 @@ function renderGlobe() {
       return null;
     })
     .htmlLat(d => d.lat)
-    .htmlLng(d => d.lng)
-    .arcsData(arcs)
-    .arcColor(d => d.color)
-    .arcAltitude(0.15)
-    .arcStroke(0.5)
-    .arcDashLength(0.4)
-    .arcDashGap(0.2)
-    .arcDashAnimateTime(2000);
+    .htmlLng(d => d.lng);
 }
 
 /**
@@ -2490,15 +2536,7 @@ function initGlobe() {
     .atmosphereAltitude(0.15)
     .width(container.clientWidth)
     .height(container.clientHeight)
-    // Arc layer defaults (overridden in renderGlobe)
-    .arcsData([])
-    .arcColor('color')
-    .arcAltitude(0.15)
-    .arcStroke(0.5)
-    .arcDashLength(0.4)
-    .arcDashGap(0.2)
-    .arcDashAnimateTime(2000)
-    // HTML elements layer
+    // HTML elements layer (aircraft + GS markers)
     .htmlElementsData([])
     .htmlElement(() => null)
     .htmlLat('lat')
@@ -2640,6 +2678,9 @@ function toggleMapView() {
       toggleBtn.title = 'Switch to 3D Globe view';
     }
     if (searchBar) searchBar.style.display = '';
+
+    // Hide any lingering globe tooltip
+    hideGlobeTooltip();
 
     // Stop spin while the globe is hidden
     stopGlobeSpin();
