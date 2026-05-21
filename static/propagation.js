@@ -44,8 +44,8 @@ let _propLastData  = null;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const DEG = Math.PI / 180;
-const RAD = 180 / Math.PI;
+const PROP_DEG = Math.PI / 180;
+const PROP_RAD = 180 / Math.PI;
 
 const GRID_DEG   = 2.0;   // IDW grid cell size in degrees
 const IDW_RADIUS = 15;    // max search radius in degrees (~1500 km)
@@ -85,30 +85,30 @@ function sigColour(dbfs, alpha) {
 
 function haversineKm(lat1, lon1, lat2, lon2) {
   const R  = 6371;
-  const dφ = (lat2 - lat1) * DEG;
-  const dλ = (lon2 - lon1) * DEG;
+  const dφ = (lat2 - lat1) * PROP_DEG;
+  const dλ = (lon2 - lon1) * PROP_DEG;
   const a  = Math.sin(dφ / 2) ** 2 +
-             Math.cos(lat1 * DEG) * Math.cos(lat2 * DEG) * Math.sin(dλ / 2) ** 2;
+             Math.cos(lat1 * PROP_DEG) * Math.cos(lat2 * PROP_DEG) * Math.sin(dλ / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function bearingDeg(lat1, lon1, lat2, lon2) {
-  const φ1 = lat1 * DEG, φ2 = lat2 * DEG;
-  const dλ = (lon2 - lon1) * DEG;
+  const φ1 = lat1 * PROP_DEG, φ2 = lat2 * PROP_DEG;
+  const dλ = (lon2 - lon1) * PROP_DEG;
   const y  = Math.sin(dλ) * Math.cos(φ2);
   const x  = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(dλ);
-  return (Math.atan2(y, x) * RAD + 360) % 360;
+  return (Math.atan2(y, x) * PROP_RAD + 360) % 360;
 }
 
 function destPoint(lat, lon, km, bearing) {
   const R  = 6371;
   const δ  = km / R;
-  const θ  = bearing * DEG;
-  const φ1 = lat * DEG, λ1 = lon * DEG;
+  const θ  = bearing * PROP_DEG;
+  const φ1 = lat * PROP_DEG, λ1 = lon * PROP_DEG;
   const φ2 = Math.asin(Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(θ));
   const λ2 = λ1 + Math.atan2(Math.sin(θ) * Math.sin(δ) * Math.cos(φ1),
                                Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2));
-  return [φ2 * RAD, ((λ2 * RAD) + 540) % 360 - 180];
+  return [φ2 * PROP_RAD, ((λ2 * PROP_RAD) + 540) % 360 - 180];
 }
 
 function mhzBand(freqKhz) {
@@ -499,7 +499,7 @@ function buildGreyline() {
   const date  = new Date();
   const doy   = (Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
                  - Date.UTC(date.getUTCFullYear(), 0, 0)) / 86400000;
-  const decl  = -23.45 * DEG * Math.cos(2 * Math.PI * (doy + 10) / 365);
+  const decl  = -23.45 * PROP_DEG * Math.cos(2 * Math.PI * (doy + 10) / 365);
   const utcH  = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
   const sLon  = (180 - utcH * 15) % 360;
   const STEPS = 360;
@@ -507,12 +507,12 @@ function buildGreyline() {
 
   for (let i = 0; i <= STEPS; i++) {
     const lon = -180 + 360 * i / STEPS;
-    const ha  = (lon - sLon) * DEG;
+    const ha  = (lon - sLon) * PROP_DEG;
     let lat;
     if (Math.abs(Math.sin(decl)) < 1e-10) {
       lat = Math.cos(ha) >= 0 ? 90 : -90;
     } else {
-      lat = Math.atan(-Math.cos(ha) * Math.cos(decl) / Math.sin(decl)) * RAD;
+      lat = Math.atan(-Math.cos(ha) * Math.cos(decl) / Math.sin(decl)) * PROP_RAD;
     }
     term.push([lat, lon]);
   }
