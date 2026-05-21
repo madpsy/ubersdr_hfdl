@@ -52,12 +52,13 @@ const IDW_RADIUS      = 40;    // max search radius in degrees for heatmap IDW (
 const CONTOUR_RADIUS  = 60;    // wider search radius for contour IDW — fills sparse areas
 const IDW_POWER       = 2;     // IDW power parameter
 
-// HFDL signal levels are typically −40 to −80 dBFS.
-// Contour levels chosen to bracket the useful reception range:
-//   −45 dBFS = strong (good copy)
-//   −60 dBFS = moderate (reliable)
-//   −75 dBFS = weak (marginal)
-const CONTOUR_LEVELS = [-45, -60, -75]; // dBFS thresholds
+// Signal levels observed: −16 to −42 dBFS (stronger than typical HFDL literature
+// because dumphfdl reports relative to ADC full-scale, not noise floor).
+// Contour levels bracket the observed reception range:
+//   −20 dBFS = strong (good copy)
+//   −30 dBFS = moderate (reliable)
+//   −40 dBFS = weak (marginal)
+const CONTOUR_LEVELS = [-20, -30, -40]; // dBFS thresholds
 
 const POLAR_SECTORS = 36;                          // 10° per sector
 const POLAR_RINGS   = [500, 1500, 3000, 5000, 8000]; // outer edge km
@@ -83,15 +84,15 @@ function escProp(s) {
 }
 
 // sigColour maps a dBFS value to an RGBA colour string.
-// HFDL signals are typically −40 to −80 dBFS:
-//   ≥ −45  strong (green)
-//   ≥ −60  moderate (amber)
-//   ≥ −75  weak (orange)
-//   <  −75 very weak (red)
+// Observed range: −16 to −42 dBFS (relative to ADC full-scale).
+//   ≥ −20  strong (green)
+//   ≥ −30  moderate (amber)
+//   ≥ −40  weak (orange)
+//   <  −40 very weak (red)
 function sigColour(dbfs, alpha) {
-  if (dbfs >= -45) return `rgba(63,185,80,${alpha})`;
-  if (dbfs >= -60) return `rgba(227,179,65,${alpha})`;
-  if (dbfs >= -75) return `rgba(240,136,62,${alpha})`;
+  if (dbfs >= -20) return `rgba(63,185,80,${alpha})`;
+  if (dbfs >= -30) return `rgba(227,179,65,${alpha})`;
+  if (dbfs >= -40) return `rgba(240,136,62,${alpha})`;
   return `rgba(248,81,73,${alpha})`;
 }
 
@@ -180,69 +181,84 @@ function buildIDWGrid(samples, radius) {
 
 // ── Heatmap layer ─────────────────────────────────────────────────────────────
 
-// buildHeatmapLayer uses the dense SigSample ring-buffer (snap.samples) when
-// buildHeatmapLayer accepts GridCell[] from /propagation/grid (preferred) or
-// falls back to PropPath positions when no grid data is available.
-// GridCell fields: lat, lon, band_mhz, freq_khz, sig_level, count
-function buildHeatmapLayer(paths, gridCells) {
+// buildHeatmapLayer renders a signal-strength heatmap by binning observations
+// into 1°×1° cells (~100 km) and colouring each cell by average signal level.
+// No IDW interpolation — only cells with actual observations are shown.
+// Colour = sigColour(avg_sig_level), opacity fixed at 0.55.
+// Sources (in priority order): GridCell[] → SigSample[] → PropPath positions.
+function buildHeatmapLayer(paths, gridCells, rawSamples) {
   if (!_heatLayer) _heatLayer = L.layerGroup();
   _heatLayer.clearLayers();
 
-  // Group pre-binned cells by band.
-  const bandGroups = {};
+  // cellDeg: size of each rendered cell in degrees (~100 km at mid-latitudes)
+  const cellDeg = 1.0;
+
+  // bins: Map of "latBin,lonBin,band" → {sum, count, freq_khz}
+  const bins = new Map();
+
+  function addToBin(lat, lon, band, sig, freq) {
+    const latBin = Math.floor(lat / cellDeg);
+    const lonBin = Math.floor(lon / cellDeg);
+    const key    = `${latBin},${lonBin},${band}`;
+    if (!bins.has(key)) bins.set(key, { latBin, lonBin, band, sum: 0, count: 0, freq });
+    const b = bins.get(key);
+    b.sum   += sig;
+    b.count += 1;
+  }
 
   if (gridCells && gridCells.length > 0) {
+    // Best: pre-binned server-side cells (already averaged, use as-is)
     for (const c of gridCells) {
-      const band = c.band_mhz;
+      if (_propBand !== 'all' && c.band_mhz !== parseInt(_propBand, 10)) continue;
+      addToBin(c.lat, c.lon, c.band_mhz, c.sig_level, c.freq_khz);
+    }
+  } else if (rawSamples && rawSamples.length > 0) {
+    // Good: raw ring-buffer samples — bin client-side
+    for (const s of rawSamples) {
+      if (!s.lat || !s.lon || !s.sig_level) continue;
+      const band = mhzBand(s.freq_khz);
       if (_propBand !== 'all' && band !== parseInt(_propBand, 10)) continue;
-      if (!bandGroups[band]) bandGroups[band] = [];
-      bandGroups[band].push({ lat: c.lat, lon: c.lon, value: c.sig_level });
+      addToBin(s.lat, s.lon, band, s.sig_level, s.freq_khz);
     }
   } else {
-    // Fallback: derive from PropPath positions (sparse, single-freq per path)
+    // Fallback: PropPath positions
     for (const p of pathsWithPos(paths)) {
+      if (!p.sig_level || !p.freq_khz) continue;
       const band = mhzBand(p.freq_khz);
       if (_propBand !== 'all' && band !== parseInt(_propBand, 10)) continue;
-      if (!bandGroups[band]) bandGroups[band] = [];
-      bandGroups[band].push({ lat: p.ac_lat, lon: p.ac_lon, value: p.sig_level });
+      addToBin(p.ac_lat, p.ac_lon, band, p.sig_level, p.freq_khz);
     }
   }
 
-  const step = GRID_DEG;
+  // Render one rectangle per bin.
+  // Colour = band (from BAND_COLOURS), opacity = signal strength.
+  // Opacity range: 0.08 (weak, −42 dBFS) → 0.55 (strong, −16 dBFS)
+  // so the map tiles always show through.
+  const SIG_MIN = -42, SIG_MAX = -16; // observed dBFS range
+  for (const b of bins.values()) {
+    const avg        = b.sum / b.count;
+    const bandColour = BAND_COLOURS[b.band] || '#58a6ff';
+    // Clamp and normalise to [0,1], then scale to opacity range [0.08, 0.55]
+    const t     = Math.max(0, Math.min(1, (avg - SIG_MIN) / (SIG_MAX - SIG_MIN)));
+    const alpha = 0.08 + t * 0.47;
+    const lat0  = b.latBin * cellDeg;
+    const lon0  = b.lonBin * cellDeg;
+    const bounds = [[lat0, lon0], [lat0 + cellDeg, lon0 + cellDeg]];
 
-  for (const [band, samples] of Object.entries(bandGroups)) {
-    if (samples.length === 0) continue;
-    const { grid, latMin, lonMin, rows, cols } = buildIDWGrid(samples);
-    const bandColour = BAND_COLOURS[parseInt(band, 10)] || '#58a6ff';
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const v = grid[r * cols + c];
-        if (isNaN(v)) continue;
-
-        const lat    = latMin + r * step;
-        const lon    = lonMin + c * step;
-        const bounds = [[lat, lon], [lat + step, lon + step]];
-        // Opacity encodes signal strength; colour encodes band.
-        // HFDL range: −80 dBFS (weak) → −45 dBFS (strong)
-        // Map to opacity 0.05 (barely visible) → 0.70 (solid)
-        const alpha  = Math.max(0.05, Math.min(0.70, (v + 80) / 35));
-
-        const rect = L.rectangle(bounds, {
-          color:       'transparent',
-          fillColor:   bandColour,
-          fillOpacity: alpha,
-          interactive: true,
-          weight:      0,
-        });
-        rect.bindTooltip(
-          `${band} MHz · ${v.toFixed(1)} dBFS`,
-          { sticky: true, className: 'prop-map-tooltip' }
-        );
-        _heatLayer.addLayer(rect);
-      }
-    }
+    const rect = L.rectangle(bounds, {
+      color:       'transparent',
+      fillColor:   bandColour,
+      fillOpacity: alpha,
+      interactive: true,
+      weight:      0,
+    });
+    rect.bindTooltip(
+      `${b.band} MHz · ${avg.toFixed(1)} dBFS · ${b.count} obs`,
+      { sticky: true, className: 'prop-map-tooltip' }
+    );
+    _heatLayer.addLayer(rect);
   }
+
   return _heatLayer;
 }
 
@@ -318,9 +334,10 @@ function marchingSquares(grid, rows, cols, latMin, lonMin, step, threshold) {
   return segments;
 }
 
-// buildContourLayer uses pre-binned GridCell[] from /propagation/grid when available.
+// buildContourLayer uses pre-binned GridCell[] from /propagation/grid (preferred),
+// falls back to raw SigSample[] from snap.samples, then to PropPath positions.
 // Uses a wider IDW search radius (CONTOUR_RADIUS) so sparse data still produces contours.
-function buildContourLayer(paths, gridCells) {
+function buildContourLayer(paths, gridCells, rawSamples) {
   if (!_contourLayer) _contourLayer = L.layerGroup();
   _contourLayer.clearLayers();
 
@@ -331,8 +348,15 @@ function buildContourLayer(paths, gridCells) {
       : gridCells.filter(c => c.band_mhz === parseInt(_propBand, 10));
     if (filtered.length < 1) return _contourLayer;
     idwSamples = filtered.map(c => ({ lat: c.lat, lon: c.lon, value: c.sig_level }));
+  } else if (rawSamples && rawSamples.length > 0) {
+    // Use ring-buffer samples directly — filter by band if needed
+    const filtered = _propBand === 'all'
+      ? rawSamples.filter(s => s.lat && s.lon && s.sig_level)
+      : rawSamples.filter(s => s.lat && s.lon && s.sig_level && mhzBand(s.freq_khz) === parseInt(_propBand, 10));
+    if (filtered.length < 1) return _contourLayer;
+    idwSamples = filtered.map(s => ({ lat: s.lat, lon: s.lon, value: s.sig_level }));
   } else {
-    const filtered = pathsWithPos(filterByBand(paths));
+    const filtered = pathsWithPos(filterByBand(paths)).filter(p => p.sig_level);
     if (filtered.length < 1) return _contourLayer;
     idwSamples = filtered.map(p => ({ lat: p.ac_lat, lon: p.ac_lon, value: p.sig_level }));
   }
@@ -341,9 +365,9 @@ function buildContourLayer(paths, gridCells) {
 
   // Keys must match CONTOUR_LEVELS exactly
   const levelStyles = {
-    [-45]: { color: '#3fb950', weight: 2,   opacity: 0.9, label: '−45 dBFS (strong)' },
-    [-60]: { color: '#e3b341', weight: 1.5, opacity: 0.8, label: '−60 dBFS (moderate)' },
-    [-75]: { color: '#f85149', weight: 1,   opacity: 0.7, label: '−75 dBFS (weak)' },
+    [-20]: { color: '#3fb950', weight: 2,   opacity: 0.9, label: '−20 dBFS (strong)' },
+    [-30]: { color: '#e3b341', weight: 1.5, opacity: 0.8, label: '−30 dBFS (moderate)' },
+    [-40]: { color: '#f85149', weight: 1,   opacity: 0.7, label: '−40 dBFS (weak)' },
   };
 
   for (const level of CONTOUR_LEVELS) {
@@ -369,8 +393,8 @@ function buildContourLayer(paths, gridCells) {
 // It uses gridCells (from /propagation/grid) as the sample source — computing
 // bearing and distance from the GS to each cell centre.  This gives far more
 // data than the old PropPath-only approach (which required rare type-213 msgs).
-// Falls back to PropPath positions if no grid cells are available.
-function buildPolarLayer(paths, gsID, gridCells) {
+// Falls back to raw SigSample[] from snap.samples, then to PropPath positions.
+function buildPolarLayer(paths, gsID, gridCells, rawSamples) {
   if (!_polarLayer) _polarLayer = L.layerGroup();
   _polarLayer.clearLayers();
 
@@ -388,8 +412,8 @@ function buildPolarLayer(paths, gsID, gridCells) {
     Array.from({ length: POLAR_RINGS.length }, () => ({ sum: 0, count: 0 }))
   );
 
-  // Use dense grid cells if available, otherwise fall back to PropPath positions
   if (gridCells && gridCells.length > 0) {
+    // Best: pre-binned grid cells weighted by observation count
     for (const c of gridCells) {
       const dist   = haversineKm(gsLat, gsLon, c.lat, c.lon);
       const bear   = bearingDeg(gsLat, gsLon, c.lat, c.lon);
@@ -398,12 +422,25 @@ function buildPolarLayer(paths, gsID, gridCells) {
       for (let i = 0; i < POLAR_RINGS.length; i++) {
         if (dist <= POLAR_RINGS[i]) { ring = i; break; }
       }
-      // Weight by sample count so cells with more observations dominate
       polarGrid[sector][ring].sum   += c.sig_level * c.count;
       polarGrid[sector][ring].count += c.count;
     }
+  } else if (rawSamples && rawSamples.length > 0) {
+    // Good: raw ring-buffer samples — each counts as 1 observation
+    for (const s of rawSamples) {
+      if (!s.lat || !s.lon || !s.sig_level) continue;
+      const dist   = haversineKm(gsLat, gsLon, s.lat, s.lon);
+      const bear   = bearingDeg(gsLat, gsLon, s.lat, s.lon);
+      const sector = Math.floor(bear / sectorDeg) % POLAR_SECTORS;
+      let ring = POLAR_RINGS.length - 1;
+      for (let i = 0; i < POLAR_RINGS.length; i++) {
+        if (dist <= POLAR_RINGS[i]) { ring = i; break; }
+      }
+      polarGrid[sector][ring].sum   += s.sig_level;
+      polarGrid[sector][ring].count += 1;
+    }
   } else {
-    const gsPaths = paths.filter(p => p.gs_id === gsID && p.ac_lat && p.ac_lon);
+    const gsPaths = paths.filter(p => p.gs_id === gsID && p.ac_lat && p.ac_lon && p.sig_level);
     if (gsPaths.length === 0) return _polarLayer;
     for (const p of gsPaths) {
       const dist   = haversineKm(gsLat, gsLon, p.ac_lat, p.ac_lon);
@@ -612,24 +649,24 @@ function renderPropLegend() {
       : [parseInt(_propBand, 10)];
     for (const b of bands) {
       const c = BAND_COLOURS[b] || '#aaa';
-      html += `<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:${c}"></span>${b} MHz</div>`;
+      html += `<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:${c};opacity:0.55"></span>${b} MHz</div>`;
     }
     html += '<div class="prop-legend__divider"></div>';
-    html += '<div class="prop-legend__title">Opacity = signal</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="opacity:0.70;background:#888"></span>Strong (&gt;−45 dBFS)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="opacity:0.40;background:#888"></span>OK (−45 to −60)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="opacity:0.20;background:#888"></span>Weak (&lt;−60 dBFS)</div>';
+    html += '<div class="prop-legend__title">Opacity = signal strength</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:#888;opacity:0.55"></span>Strong (−16 dBFS)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:#888;opacity:0.30"></span>Moderate (−30 dBFS)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:#888;opacity:0.08"></span>Weak (−42 dBFS)</div>';
   } else if (_propMode === 'contours') {
     html += '<div class="prop-legend__title">Contour levels</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#3fb950"></span>−45 dBFS (strong)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#e3b341"></span>−60 dBFS (moderate)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#f85149"></span>−75 dBFS (weak)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#3fb950"></span>−20 dBFS (strong)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#e3b341"></span>−30 dBFS (moderate)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__line" style="background:#f85149"></span>−40 dBFS (weak)</div>';
   } else if (_propMode === 'polar') {
     html += '<div class="prop-legend__title">Signal level</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(63,185,80,0.55)"></span>Strong (&gt;−45 dBFS)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(227,179,65,0.55)"></span>OK (−45 to −60)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(240,136,62,0.55)"></span>Marginal (−60 to −75)</div>';
-    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(248,81,73,0.55)"></span>Weak (&lt;−75 dBFS)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(63,185,80,0.55)"></span>Strong (&gt;−20 dBFS)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(227,179,65,0.55)"></span>OK (−20 to −30)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(240,136,62,0.55)"></span>Marginal (−30 to −40)</div>';
+    html += '<div class="prop-legend__row"><span class="prop-legend__swatch" style="background:rgba(248,81,73,0.55)"></span>Weak (&lt;−40 dBFS)</div>';
   }
 
   html += '</div>';
@@ -691,8 +728,10 @@ let _propGridSnap = null;
 
 function renderPropMap(snap, gridSnap) {
 if (!propMap || !snap || !snap.paths) return;
-const paths     = snap.paths;
-const gridCells = gridSnap && gridSnap.cells ? gridSnap.cells : [];
+const paths      = snap.paths;
+const gridCells  = gridSnap && gridSnap.cells ? gridSnap.cells : [];
+// Raw ring-buffer samples from snap.samples — used when /propagation/grid is unavailable
+const rawSamples = snap.samples || [];
 
 // Always rebuild path lines (they respect band filter)
 buildPathLayer(paths);
@@ -705,13 +744,13 @@ if (_contourLayer && propMap.hasLayer(_contourLayer)) _contourLayer.remove();
 if (_polarLayer   && propMap.hasLayer(_polarLayer))   _polarLayer.remove();
 
 if (_propMode === 'heatmap') {
-  buildHeatmapLayer(paths, gridCells);
+  buildHeatmapLayer(paths, gridCells, rawSamples);
   if (_heatLayer) _heatLayer.addTo(propMap);
 } else if (_propMode === 'contours') {
-  buildContourLayer(paths, gridCells);
+  buildContourLayer(paths, gridCells, rawSamples);
   if (_contourLayer) _contourLayer.addTo(propMap);
 } else if (_propMode === 'polar') {
-  buildPolarLayer(paths, _propGSID, gridCells);
+  buildPolarLayer(paths, _propGSID, gridCells, rawSamples);
   if (_polarLayer) _polarLayer.addTo(propMap);
 }
 
@@ -728,10 +767,14 @@ renderPropagationTab(snap);
 
 // fetchAndRenderPropMap fetches /propagation (matrix + paths) and
 // /propagation/grid (pre-binned heatmap cells) in parallel, then renders.
+// /propagation/grid may return 404 on older images — that's handled gracefully;
+// the builders fall back to snap.samples from /propagation in that case.
 function fetchAndRenderPropMap() {
 Promise.all([
   fetch(BASE_PATH + '/propagation').then(r => r.json()),
-  fetch(BASE_PATH + '/propagation/grid').then(r => r.json()),
+  fetch(BASE_PATH + '/propagation/grid')
+    .then(r => r.ok ? r.json() : null)
+    .catch(() => null),
 ]).then(([snap, gridSnap]) => {
   _propLastSnap  = snap;
   _propGridSnap  = gridSnap;
