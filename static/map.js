@@ -2665,9 +2665,14 @@ function initGlobe() {
       }
     });
 
-  // Three.js is loaded via CDN in index.html before globe.gl, so window.THREE
-  // is always available by the time initGlobe() runs.
+  // Three.js is loaded via an ES module shim in index.html. Module scripts
+  // execute after all classic scripts but before user interaction, so
+  // window.THREE is available by the time the user clicks the globe toggle.
   _globeTHREE = window.THREE;
+  if (!_globeTHREE) {
+    console.warn('globe: window.THREE not available — aircraft sprites will not render. ' +
+                 'Ensure the Three.js module shim in index.html has loaded.');
+  }
 
   // Set initial point of view
   globe.pointOfView({ lat: 30, lng: 0, altitude: 2.5 });

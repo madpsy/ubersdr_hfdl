@@ -442,10 +442,15 @@
 
   </main>
 
-  <!-- Three.js — loaded before globe.gl so window.THREE is available for sprite rendering -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.min.js"></script>
   <!-- globe.gl (CDN) — loaded before map.js so Globe() is available -->
   <script src="https://unpkg.com/globe.gl@2.30.0/dist/globe.gl.min.js"></script>
+  <!-- Three.js ES module → window.THREE shim for sprite rendering in map.js.
+       globe.gl bundles Three.js internally but does not expose window.THREE,
+       so we load it separately and assign it to the global namespace. -->
+  <script type="module">
+    import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.180.0/three.module.min.js';
+    window.THREE = THREE;
+  </script>
   <!-- Leaflet JS (CDN) -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <!-- Chart.js (CDN) -->
