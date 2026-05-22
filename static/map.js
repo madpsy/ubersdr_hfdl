@@ -2401,25 +2401,31 @@ const GLOBE_THEMES = {
   'topology':    '//unpkg.com/three-globe/example/img/earth-topology.png',
 };
 
-// ---- HTML element cache for globe markers -----------------------------------
-// globe.gl's htmlElementsData layer uses CSS2DRenderer which writes
-// style.transform to every element on every frame. The original code
-// recreated ALL elements on every SSE update (calling htmlElementsData with
-// a new array + htmlElement factory). This caused massive DOM churn.
+// ---- Globe marker layers ----------------------------------------------------
 //
-// The fix:
-// 1. Cache HTML elements in a Map — create once, mutate innerHTML in-place
-// 2. Keep stable data-point objects so globe.gl's internal diff sees them as
-//    unchanged and does NOT call the htmlElement factory again
-// 3. Only call htmlElementsData() when the SET of keys changes (add/remove)
-// 4. Viewport-cull: only pass elements on the visible hemisphere to reduce
-//    the per-frame CSS2DRenderer projection cost from N to ~N/2
+// Two rendering strategies, swapped depending on whether the globe is spinning:
+//
+//  SPINNING  → pointsData (Three.js InstancedMesh, one GPU draw call, zero DOM)
+//              Aircraft appear as coloured dots. CSS2DRenderer is not invoked
+//              for aircraft, so there is no per-frame style recalculation.
+//
+//  STOPPED   → htmlElementsData (CSS2DRenderer, SVG plane icons + labels)
+//              Full fidelity — rotated ✈ icon, GS colour, callsign label,
+//              hover tooltip, click-to-panel.
+//
+// GS markers always use htmlElementsData (~18 elements, negligible cost).
 
-// Cache: key → { el: HTMLElement, dataPoint: {lat, lng, ...}, ac: object }
+// --- htmlElementsData cache (used when stopped) ---
+// key → { el: HTMLElement, dataPoint: {lat, lng, _key, _el}, ac }
 const _globeElCache = new Map();
 
-// Cache for GS elements: gs_id → { el, dataPoint, gs }
+// gs_id → { el, dataPoint, gs }
 const _globeGSElCache = new Map();
+
+// --- pointsData array (used when spinning) ---
+// Each entry: { lat, lng, color, _key }
+// Rebuilt by renderGlobe(); pushed to globe.pointsData() on change.
+let _globePointsData = [];
 
 /**
  * Build the HTML element for a plane icon on the globe.
@@ -2554,36 +2560,45 @@ function scheduleGlobeRender() {
 }
 
 /**
- * Sync the globe's htmlElementsData with the current aircraftData + gsDataMap.
+ * Sync both rendering layers with the current aircraftData + gsDataMap.
  *
- * Uses an element cache so that:
- * - HTML elements are created once and mutated in-place (no DOM churn)
- * - htmlElementsData() is only called when the set of keys changes (add/remove)
- * - Position updates mutate the stable dataPoint objects directly — globe.gl
- *   picks up the new lat/lng on its next render frame automatically
+ * Maintains two parallel representations of aircraft:
+ *   _globeElCache    — HTML elements (SVG plane icons) for the stopped view
+ *   _globePointsData — plain {lat,lng,color,_key} objects for the spinning view
+ *
+ * GS markers always live in htmlElementsData (only ~18, negligible CSS2DRenderer cost).
+ *
+ * The active aircraft layer is determined by globeSpinning:
+ *   spinning → pointsData active, htmlElementsData has GS-only
+ *   stopped  → htmlElementsData active (aircraft + GS), pointsData cleared
  */
 function renderGlobe() {
   if (!globe) return;
 
-  // ---- Aircraft elements (cached) --------------------------------------------
+  // ---- Build / update aircraft caches ----------------------------------------
 
-  const wantedKeys = new Set();
-  let   setChanged = false;
+  const wantedKeys  = new Set();
+  let   htmlChanged = false;   // did the htmlElementsData set change?
+  const newPoints   = [];      // fresh pointsData array
 
   for (const ac of Object.values(aircraftData)) {
     if (!ac.lat || !ac.lon) continue;
     wantedKeys.add(ac.key);
 
+    const color = gsColorFor(ac.gs_id) || '#4af';
+
+    // pointsData entry (always built, pushed when spinning)
+    newPoints.push({ lat: ac.lat, lng: ac.lon, color, _key: ac.key });
+
+    // htmlElementsData cache (always maintained, pushed when stopped)
     let cached = _globeElCache.get(ac.key);
     if (!cached) {
-      // New aircraft — create element and stable data point
-      const el = makeGlobePlaneEl(ac);
+      const el        = makeGlobePlaneEl(ac);
       const dataPoint = { lat: ac.lat, lng: ac.lon, _key: ac.key, _el: el };
-      cached = { el, dataPoint, ac };
+      cached          = { el, dataPoint, ac };
       _globeElCache.set(ac.key, cached);
-      setChanged = true;
+      htmlChanged = true;
     } else {
-      // Existing aircraft — update element in-place and move the data point
       _updateGlobePlaneEl(cached.el, ac);
       cached.dataPoint.lat = ac.lat;
       cached.dataPoint.lng = ac.lon;
@@ -2591,34 +2606,33 @@ function renderGlobe() {
     }
   }
 
-  // Evict aircraft that are no longer visible or have been purged
+  // Evict stale aircraft from HTML cache
   for (const key of _globeElCache.keys()) {
     if (!wantedKeys.has(key)) {
       _globeElCache.delete(key);
-      setChanged = true;
+      htmlChanged = true;
     }
   }
 
-  // ---- GS elements (cached) -------------------------------------------------
+  // ---- GS elements (always in htmlElementsData) ------------------------------
 
-  const wantedGS = new Set();
+  const wantedGS  = new Set();
+  let   gsChanged = false;
+
   for (const gs of Object.values(gsDataMap)) {
     if (!gs.lat || !gs.lon) continue;
     wantedGS.add(gs.gs_id);
 
     let cached = _globeGSElCache.get(gs.gs_id);
     if (!cached) {
-      const el = makeGlobeGSEl(gs);
+      const el        = makeGlobeGSEl(gs);
       const dataPoint = { lat: gs.lat, lng: gs.lon, _gsId: gs.gs_id, _el: el };
-      cached = { el, dataPoint, gs };
+      cached          = { el, dataPoint, gs };
       _globeGSElCache.set(gs.gs_id, cached);
-      setChanged = true;
+      gsChanged = true;
     } else {
-      // Update opacity in case heard status changed
       const opacity = (gs.last_heard && gs.last_heard > 0) ? 1.0 : gs.spdu_active ? 0.7 : 0.25;
-      if (parseFloat(cached.el.style.opacity) !== opacity) {
-        cached.el.style.opacity = opacity;
-      }
+      if (parseFloat(cached.el.style.opacity) !== opacity) cached.el.style.opacity = opacity;
       cached.dataPoint.lat = gs.lat;
       cached.dataPoint.lng = gs.lon;
       cached.gs = gs;
@@ -2628,27 +2642,95 @@ function renderGlobe() {
   for (const gsId of _globeGSElCache.keys()) {
     if (!wantedGS.has(gsId)) {
       _globeGSElCache.delete(gsId);
-      setChanged = true;
+      gsChanged = true;
     }
   }
 
-  // ---- Push to globe.gl only when the set of visible elements changed --------
-  // When setChanged is false, the stable dataPoint objects are already in
-  // globe.gl's internal array — it will pick up the mutated lat/lng on the
-  // next render frame without us calling htmlElementsData() again.
+  // ---- Push to globe.gl layers -----------------------------------------------
 
-  if (setChanged) {
-    const allPoints = [
-      ...[..._globeElCache.values()].map(c => c.dataPoint),
-      ...[..._globeGSElCache.values()].map(c => c.dataPoint),
-    ];
+  if (globeSpinning) {
+    // --- SPINNING: GPU dots for aircraft, HTML only for GS ---
 
-    globe
-      .htmlElementsData(allPoints)
-      .htmlElement(d => d._el)
-      .htmlLat(d => d.lat)
-      .htmlLng(d => d.lng);
+    // Update pointsData whenever the array content changes
+    const pointsChanged = newPoints.length !== _globePointsData.length ||
+      newPoints.some((p, i) => {
+        const q = _globePointsData[i];
+        return !q || p._key !== q._key || p.lat !== q.lat || p.lng !== q.lng || p.color !== q.color;
+      });
+
+    if (pointsChanged) {
+      _globePointsData = newPoints;
+      globe.pointsData(_globePointsData);
+    }
+
+    // Keep GS markers in htmlElementsData (aircraft excluded while spinning)
+    if (gsChanged) {
+      const gsPoints = [..._globeGSElCache.values()].map(c => c.dataPoint);
+      globe
+        .htmlElementsData(gsPoints)
+        .htmlElement(d => d._el)
+        .htmlLat(d => d.lat)
+        .htmlLng(d => d.lng);
+    }
+
+  } else {
+    // --- STOPPED: full SVG icons for aircraft + GS ---
+
+    if (htmlChanged || gsChanged) {
+      const allPoints = [
+        ...[..._globeElCache.values()].map(c => c.dataPoint),
+        ...[..._globeGSElCache.values()].map(c => c.dataPoint),
+      ];
+      globe
+        .htmlElementsData(allPoints)
+        .htmlElement(d => d._el)
+        .htmlLat(d => d.lat)
+        .htmlLng(d => d.lng);
+    }
   }
+}
+
+/**
+ * Activate the GPU-dots layer (called when spin starts).
+ * Clears aircraft from htmlElementsData; pushes current pointsData.
+ */
+function _globeActivateDotsLayer() {
+  if (!globe) return;
+  // Push current points immediately
+  _globePointsData = Object.values(aircraftData)
+    .filter(ac => ac.lat && ac.lon)
+    .map(ac => ({ lat: ac.lat, lng: ac.lon, color: gsColorFor(ac.gs_id) || '#4af', _key: ac.key }));
+  globe.pointsData(_globePointsData);
+
+  // htmlElementsData: GS only (no aircraft)
+  const gsPoints = [..._globeGSElCache.values()].map(c => c.dataPoint);
+  globe
+    .htmlElementsData(gsPoints)
+    .htmlElement(d => d._el)
+    .htmlLat(d => d.lat)
+    .htmlLng(d => d.lng);
+}
+
+/**
+ * Activate the SVG-icons layer (called when spin stops).
+ * Clears pointsData; pushes full htmlElementsData (aircraft + GS).
+ */
+function _globeActivateIconsLayer() {
+  if (!globe) return;
+  // Clear GPU dots
+  _globePointsData = [];
+  globe.pointsData([]);
+
+  // htmlElementsData: aircraft + GS
+  const allPoints = [
+    ...[..._globeElCache.values()].map(c => c.dataPoint),
+    ...[..._globeGSElCache.values()].map(c => c.dataPoint),
+  ];
+  globe
+    .htmlElementsData(allPoints)
+    .htmlElement(d => d._el)
+    .htmlLat(d => d.lat)
+    .htmlLng(d => d.lng);
 }
 
 /**
@@ -2675,11 +2757,29 @@ function initGlobe() {
     .atmosphereAltitude(0.15)
     .width(container.clientWidth)
     .height(container.clientHeight)
-    // HTML elements layer (aircraft + GS markers)
+    // HTML elements layer — aircraft SVG icons (stopped) + GS markers (always)
     .htmlElementsData([])
     .htmlElement(() => null)
     .htmlLat('lat')
-    .htmlLng('lng');
+    .htmlLng('lng')
+    // Points layer — GPU dots used during spin (zero CSS2DRenderer cost)
+    .pointsData([])
+    .pointLat('lat')
+    .pointLng('lng')
+    .pointColor('color')
+    .pointAltitude(0.005)
+    .pointRadius(0.4)
+    .pointResolution(6)
+    .onPointHover((pt) => {
+      if (!pt) { hideGlobeTooltip(); return; }
+      const ac = aircraftData[pt._key];
+      if (ac) showGlobeTooltip(buildPopup(ac));
+    })
+    .onPointClick((pt) => {
+      if (!pt) return;
+      hideGlobeTooltip();
+      selectAircraft(pt._key, false);
+    });
 
   // Set initial point of view
   globe.pointOfView({ lat: 30, lng: 0, altitude: 2.5 });
@@ -2741,6 +2841,10 @@ function startGlobeSpin() {
   if (globeSpinning || !globe) return;
   globeSpinning = true;
   updateSpinBtn();
+
+  // Switch aircraft rendering to GPU dots — eliminates CSS2DRenderer cost
+  _globeActivateDotsLayer();
+
   const spinSpeed = 0.08; // degrees per frame (~5°/sec at 60 fps)
   const spin = () => {
     if (!globeSpinning || globeUserInteracting) return;
@@ -2758,6 +2862,9 @@ function stopGlobeSpin() {
     globeSpinInterval = null;
   }
   updateSpinBtn();
+
+  // Switch aircraft rendering back to SVG plane icons
+  _globeActivateIconsLayer();
 }
 
 function updateSpinBtn() {
