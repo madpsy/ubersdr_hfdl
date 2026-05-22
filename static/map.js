@@ -2401,109 +2401,108 @@ const GLOBE_THEMES = {
   'topology':    '//unpkg.com/three-globe/example/img/earth-topology.png',
 };
 
-// ---- Aircraft sprite cache -------------------------------------------------
-// Aircraft markers are rendered as Three.js Sprites (GPU geometry) rather than
-// HTML elements, eliminating CSS2DRenderer's per-frame DOM write cost entirely.
-// GS markers remain as HTML elements — there are only ~18 of them so the cost
-// is negligible, and they benefit from CSS opacity/label styling.
+// ---- HTML element cache for globe markers -----------------------------------
+// globe.gl's htmlElementsData layer uses CSS2DRenderer which writes
+// style.transform to every element on every frame. The original code
+// recreated ALL elements on every SSE update (calling htmlElementsData with
+// a new array + htmlElement factory). This caused massive DOM churn.
 //
-// Cache: key → { sprite: THREE.Sprite, canvas: HTMLCanvasElement,
-//                texture: THREE.CanvasTexture, ac: object }
-// Sprites are created once and their canvas texture is updated in-place on
-// position/bearing/colour changes — no new Three.js objects are allocated.
-//
-// _globeTHREE is set in initGlobe() from window.THREE (loaded via CDN in
-// index.html before globe.gl).
+// The fix:
+// 1. Cache HTML elements in a Map — create once, mutate innerHTML in-place
+// 2. Keep stable data-point objects so globe.gl's internal diff sees them as
+//    unchanged and does NOT call the htmlElement factory again
+// 3. Only call htmlElementsData() when the SET of keys changes (add/remove)
+// 4. Viewport-cull: only pass elements on the visible hemisphere to reduce
+//    the per-frame CSS2DRenderer projection cost from N to ~N/2
 
-const _globeSpriteCache = new Map(); // key → { sprite, canvas, texture, ac }
-let   _globeTHREE       = null;      // THREE namespace, extracted from globe.renderer()
+// Cache: key → { el: HTMLElement, dataPoint: {lat, lng, ...}, ac: object }
+const _globeElCache = new Map();
 
-// Canvas dimensions for the sprite texture.
-// Width must accommodate the ✈ glyph (left) + label text (right).
-const SPRITE_W = 160;
-const SPRITE_H = 56;
+// Cache for GS elements: gs_id → { el, dataPoint, gs }
+const _globeGSElCache = new Map();
 
 /**
- * Draw the aircraft marker onto a canvas context.
- * Called both when creating a new sprite and when updating an existing one.
+ * Build the HTML element for a plane icon on the globe.
+ * Wires hover (tooltip) and click (ac-panel) events.
+ * Called once per aircraft — the element is then cached and mutated in-place.
  */
-function _drawAcSprite(ctx, ac) {
+function makeGlobePlaneEl(ac) {
+  const labelText = ac.flight || ac.reg || ac.icao || ac.key || '';
+  const bearing   = ac.bearing || 0;
+  const colour    = gsColorFor(ac.gs_id);
+  const el = document.createElement('div');
+  el.className = 'ac-marker';
+  el.style.color = colour;
+  el.style.position = 'relative';
+  el.style.pointerEvents = 'auto';
+  el.style.cursor = 'pointer';
+  el.innerHTML =
+    `<span style="display:inline-block;transform:rotate(${bearing - 90}deg);font-size:22px;text-shadow:0 0 6px rgba(0,0,0,0.9)">✈</span>` +
+    (labelText
+      ? `<div class="ac-label">${esc(labelText.toUpperCase())}</div>`
+      : '');
+
+  // Store the key on the element so event handlers can look up latest data
+  el._acKey = ac.key;
+
+  // Hover: show popup-style tooltip
+  el.addEventListener('mouseenter', (e) => {
+    e.stopPropagation();
+    const live = aircraftData[el._acKey] || ac;
+    showGlobeTooltip(buildPopup(live));
+  });
+  el.addEventListener('mouseleave', (e) => {
+    e.stopPropagation();
+    hideGlobeTooltip();
+  });
+
+  // Click: open the aircraft detail side panel
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    hideGlobeTooltip();
+    selectAircraft(el._acKey, false);
+  });
+
+  return el;
+}
+
+/**
+ * Update an existing cached plane element's visual state in-place.
+ * Only touches the DOM if something actually changed.
+ */
+function _updateGlobePlaneEl(el, ac) {
   const colour    = gsColorFor(ac.gs_id);
   const bearing   = ac.bearing || 0;
   const labelText = (ac.flight || ac.reg || ac.icao || ac.key || '').toUpperCase();
 
-  ctx.clearRect(0, 0, SPRITE_W, SPRITE_H);
+  // Update colour
+  if (el.style.color !== colour) el.style.color = colour;
 
-  // ✈ glyph — rotated to match bearing, centred in the left half
-  ctx.save();
-  ctx.translate(28, 28);
-  ctx.rotate((bearing - 90) * Math.PI / 180);
-  ctx.font = '26px serif';
-  ctx.fillStyle = colour;
-  // Drop shadow so the icon is readable over any globe texture
-  ctx.shadowColor = 'rgba(0,0,0,0.85)';
-  ctx.shadowBlur  = 5;
-  ctx.fillText('✈', -13, 10);
-  ctx.restore();
+  // Update bearing rotation on the ✈ span
+  const span = el.querySelector('span');
+  if (span) {
+    const rot = `rotate(${bearing - 90}deg)`;
+    if (span.style.transform !== rot) span.style.transform = rot;
+  }
 
-  // Label text — right of the glyph
+  // Update label text
+  let labelEl = el.querySelector('.ac-label');
   if (labelText) {
-    ctx.font = 'bold 13px sans-serif';
-    ctx.fillStyle = colour;
-    ctx.shadowColor = 'rgba(0,0,0,0.9)';
-    ctx.shadowBlur  = 4;
-    ctx.fillText(labelText, 46, 32);
+    if (labelEl) {
+      if (labelEl.textContent !== labelText) labelEl.textContent = labelText;
+    } else {
+      labelEl = document.createElement('div');
+      labelEl.className = 'ac-label';
+      labelEl.textContent = labelText;
+      el.appendChild(labelEl);
+    }
+  } else if (labelEl) {
+    labelEl.remove();
   }
-}
-
-/**
- * Return the cached sprite for an aircraft, creating it if necessary.
- * If the sprite already exists its texture is redrawn in-place.
- */
-function _upsertAcSprite(ac) {
-  const THREE = _globeTHREE;
-  if (!THREE) return null;
-
-  let entry = _globeSpriteCache.get(ac.key);
-
-  if (!entry) {
-    const canvas  = document.createElement('canvas');
-    canvas.width  = SPRITE_W;
-    canvas.height = SPRITE_H;
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.minFilter = THREE.LinearFilter; // avoid mipmap generation cost
-
-    const material = new THREE.SpriteMaterial({
-      map:         texture,
-      depthTest:   false,
-      transparent: true,
-      sizeAttenuation: true, // scale in world units (globe radius = 100)
-    });
-    const sprite = new THREE.Sprite(material);
-    // Globe radius in globe.gl's world space is 100 units.
-    // A scale of 8 world units gives a marker ~40–50px at the default altitude.
-    // Aspect ratio preserves the canvas proportions (SPRITE_W:SPRITE_H).
-    const GLOBE_SCALE = 8;
-    sprite.scale.set(GLOBE_SCALE, GLOBE_SCALE * (SPRITE_H / SPRITE_W), 1);
-    sprite.userData = { key: ac.key, type: 'ac' };
-
-    entry = { sprite, canvas, texture, ac };
-    _globeSpriteCache.set(ac.key, entry);
-  }
-
-  // Always redraw — bearing/colour/label may have changed
-  const ctx = entry.canvas.getContext('2d');
-  _drawAcSprite(ctx, ac);
-  entry.texture.needsUpdate = true;
-  entry.ac = ac;
-
-  return entry;
 }
 
 /**
  * Build the HTML element for a GS marker on the globe.
- * GS markers stay as HTML elements — there are only ~18 of them so the
- * CSS2DRenderer cost is negligible, and CSS opacity/label styling is preserved.
  * Wires hover (tooltip) event.
  */
 function makeGlobeGSEl(gs) {
@@ -2519,10 +2518,12 @@ function makeGlobeGSEl(gs) {
     `<span style="font-size:20px">📡</span>` +
     `<div class="gs-marker__label">${esc(gs.location)}</div>`;
 
+  el._gsId = gs.gs_id;
+
   // Hover: show GS popup tooltip
   el.addEventListener('mouseenter', (e) => {
     e.stopPropagation();
-    const live = gsDataMap[gs.gs_id] || gs;
+    const live = gsDataMap[el._gsId] || gs;
     const distKm = distanceToReceiverKm(live.lat, live.lon);
     showGlobeTooltip(buildGSPopup(live, distKm));
   });
@@ -2532,6 +2533,23 @@ function makeGlobeGSEl(gs) {
   });
 
   return el;
+}
+
+/**
+ * Check if a lat/lng point is on the visible hemisphere of the globe.
+ * Points on the back face are invisible and don't need CSS2DRenderer projection.
+ */
+function _isOnVisibleHemisphere(lat, lng) {
+  if (!globe) return true;
+  const pov = globe.pointOfView();
+  const toRad = Math.PI / 180;
+  const ax = Math.cos(lat * toRad) * Math.cos(lng * toRad);
+  const ay = Math.cos(lat * toRad) * Math.sin(lng * toRad);
+  const az = Math.sin(lat * toRad);
+  const cx = Math.cos(pov.lat * toRad) * Math.cos(pov.lng * toRad);
+  const cy = Math.cos(pov.lat * toRad) * Math.sin(pov.lng * toRad);
+  const cz = Math.sin(pov.lat * toRad);
+  return (ax * cx + ay * cy + az * cz) > -0.1; // small margin past the edge
 }
 
 // Pending globe render flag — collapses multiple SSE updates within one
@@ -2553,67 +2571,106 @@ function scheduleGlobeRender() {
 }
 
 /**
- * Sync the globe's custom (sprite) layer and HTML (GS) layer with the current
- * aircraftData + gsDataMap.
+ * Sync the globe's htmlElementsData with the current aircraftData + gsDataMap.
  *
- * Aircraft → Three.js Sprites via customLayerData (zero CSS2DRenderer cost).
- * GS       → HTML elements via htmlElementsData  (~18 elements, negligible).
- *
- * Sprites are cached and their textures updated in-place — no new Three.js
- * objects are allocated on position updates.
+ * Uses an element cache so that:
+ * - HTML elements are created once and mutated in-place (no DOM churn)
+ * - htmlElementsData() is only called when the set of visible keys changes
+ * - Viewport culling reduces the CSS2DRenderer per-frame cost
  */
 function renderGlobe() {
   if (!globe) return;
-  const THREE = _globeTHREE;
-  if (!THREE) return;
 
-  // ---- Aircraft sprites (customLayerData) ------------------------------------
+  // ---- Aircraft elements (cached, viewport-culled) ---------------------------
 
   const wantedKeys = new Set();
-  const acPoints   = [];
+  let   setChanged = false;
 
   for (const ac of Object.values(aircraftData)) {
     if (!ac.lat || !ac.lon) continue;
+    // Viewport culling: skip aircraft on the back face of the globe
+    if (!_isOnVisibleHemisphere(ac.lat, ac.lon)) {
+      // If it was previously visible, mark set as changed
+      if (_globeElCache.has(ac.key)) setChanged = true;
+      continue;
+    }
     wantedKeys.add(ac.key);
-    const entry = _upsertAcSprite(ac);
-    if (entry) {
-      acPoints.push({ lat: ac.lat, lng: ac.lon, key: ac.key, entry });
+
+    let cached = _globeElCache.get(ac.key);
+    if (!cached) {
+      // New aircraft — create element and stable data point
+      const el = makeGlobePlaneEl(ac);
+      const dataPoint = { lat: ac.lat, lng: ac.lon, _key: ac.key, _el: el };
+      cached = { el, dataPoint, ac };
+      _globeElCache.set(ac.key, cached);
+      setChanged = true;
+    } else {
+      // Existing aircraft — update element in-place and move the data point
+      _updateGlobePlaneEl(cached.el, ac);
+      cached.dataPoint.lat = ac.lat;
+      cached.dataPoint.lng = ac.lon;
+      cached.ac = ac;
     }
   }
 
-  // Evict sprites for aircraft that have been purged
-  for (const key of _globeSpriteCache.keys()) {
+  // Evict aircraft that are no longer visible or have been purged
+  for (const key of _globeElCache.keys()) {
     if (!wantedKeys.has(key)) {
-      const entry = _globeSpriteCache.get(key);
-      if (entry && entry.sprite.material) {
-        entry.sprite.material.map.dispose();
-        entry.sprite.material.dispose();
-      }
-      _globeSpriteCache.delete(key);
+      _globeElCache.delete(key);
+      setChanged = true;
     }
   }
 
-  globe
-    .customLayerData(acPoints)
-    .customThreeObject(d => d.entry.sprite)
-    .customThreeObjectUpdate((obj, d) => {
-      // globe.gl calls this to reposition the object in 3D space — nothing
-      // extra needed here; the sprite texture is already up to date.
-    });
+  // ---- GS elements (cached) -------------------------------------------------
 
-  // ---- GS HTML elements (htmlElementsData) -----------------------------------
-  // Rebuilt on every renderGlobe() call — but only ~18 elements so the
-  // CSS2DRenderer cost is negligible.
+  const wantedGS = new Set();
+  for (const gs of Object.values(gsDataMap)) {
+    if (!gs.lat || !gs.lon) continue;
+    wantedGS.add(gs.gs_id);
 
-  const gsPoints = Object.values(gsDataMap)
-    .filter(gs => gs.lat && gs.lon)
-    .map(gs => ({ lat: gs.lat, lng: gs.lon, gs }));
+    let cached = _globeGSElCache.get(gs.gs_id);
+    if (!cached) {
+      const el = makeGlobeGSEl(gs);
+      const dataPoint = { lat: gs.lat, lng: gs.lon, _gsId: gs.gs_id, _el: el };
+      cached = { el, dataPoint, gs };
+      _globeGSElCache.set(gs.gs_id, cached);
+      setChanged = true;
+    } else {
+      // Update opacity in case heard status changed
+      const opacity = (gs.last_heard && gs.last_heard > 0) ? 1.0 : gs.spdu_active ? 0.7 : 0.25;
+      if (parseFloat(cached.el.style.opacity) !== opacity) {
+        cached.el.style.opacity = opacity;
+      }
+      cached.dataPoint.lat = gs.lat;
+      cached.dataPoint.lng = gs.lon;
+      cached.gs = gs;
+    }
+  }
 
-  globe
-    .htmlElementsData(gsPoints)
-    .htmlElement(d => makeGlobeGSEl(d.gs))
-    .htmlLat(d => d.lat)
-    .htmlLng(d => d.lng);
+  for (const gsId of _globeGSElCache.keys()) {
+    if (!wantedGS.has(gsId)) {
+      _globeGSElCache.delete(gsId);
+      setChanged = true;
+    }
+  }
+
+  // ---- Push to globe.gl only when the set of visible elements changed --------
+  // When setChanged is false, the stable dataPoint objects are already in
+  // globe.gl's internal array — it will pick up the mutated lat/lng on the
+  // next render frame without us calling htmlElementsData() again.
+
+  if (setChanged) {
+    const allPoints = [
+      ...[..._globeElCache.values()].map(c => c.dataPoint),
+      ...[..._globeGSElCache.values()].map(c => c.dataPoint),
+    ];
+
+    globe
+      .htmlElementsData(allPoints)
+      .htmlElement(d => d._el)
+      .htmlLat(d => d.lat)
+      .htmlLng(d => d.lng);
+  }
 }
 
 /**
@@ -2640,39 +2697,11 @@ function initGlobe() {
     .atmosphereAltitude(0.15)
     .width(container.clientWidth)
     .height(container.clientHeight)
-    // Custom layer: aircraft sprites (Three.js, no DOM)
-    .customLayerData([])
-    .customThreeObject(() => null)
-    .customThreeObjectUpdate(() => {})
-    // HTML layer: GS markers only (~18 elements)
+    // HTML elements layer (aircraft + GS markers)
     .htmlElementsData([])
     .htmlElement(() => null)
     .htmlLat('lat')
-    .htmlLng('lng')
-    // Raycasting: hover shows popup tooltip, click opens side panel
-    .onObjectHover((obj) => {
-      if (obj && obj.userData && obj.userData.type === 'ac') {
-        const ac = aircraftData[obj.userData.key];
-        if (ac) showGlobeTooltip(buildPopup(ac));
-      } else {
-        hideGlobeTooltip();
-      }
-    })
-    .onObjectClick((obj) => {
-      if (obj && obj.userData && obj.userData.type === 'ac') {
-        hideGlobeTooltip();
-        selectAircraft(obj.userData.key, false);
-      }
-    });
-
-  // Three.js is loaded via an ES module shim in index.html. Module scripts
-  // execute after all classic scripts but before user interaction, so
-  // window.THREE is available by the time the user clicks the globe toggle.
-  _globeTHREE = window.THREE;
-  if (!_globeTHREE) {
-    console.warn('globe: window.THREE not available — aircraft sprites will not render. ' +
-                 'Ensure the Three.js module shim in index.html has loaded.');
-  }
+    .htmlLng('lng');
 
   // Set initial point of view
   globe.pointOfView({ lat: 30, lng: 0, altitude: 2.5 });
@@ -2730,15 +2759,27 @@ function initGlobe() {
   startGlobeSpin();
 }
 
+// Counter for viewport-cull refresh during spin — re-cull every N frames
+// to update which aircraft are on the visible hemisphere.
+let _spinFrameCount = 0;
+const SPIN_CULL_INTERVAL = 30; // re-cull every 30 frames (~0.5s at 60fps)
+
 function startGlobeSpin() {
   if (globeSpinning || !globe) return;
   globeSpinning = true;
+  _spinFrameCount = 0;
   updateSpinBtn();
   const spinSpeed = 0.08; // degrees per frame (~5°/sec at 60 fps)
   const spin = () => {
     if (!globeSpinning || globeUserInteracting) return;
     const pov = globe.pointOfView();
     globe.pointOfView({ lat: pov.lat, lng: pov.lng + spinSpeed, altitude: pov.altitude }, 0);
+    // Periodically re-cull visible elements as the globe rotates
+    _spinFrameCount++;
+    if (_spinFrameCount >= SPIN_CULL_INTERVAL) {
+      _spinFrameCount = 0;
+      renderGlobe();
+    }
     globeSpinInterval = requestAnimationFrame(spin);
   };
   globeSpinInterval = requestAnimationFrame(spin);
