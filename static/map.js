@@ -2411,8 +2411,12 @@ const GLOBE_THEMES = {
 //                texture: THREE.CanvasTexture, ac: object }
 // Sprites are created once and their canvas texture is updated in-place on
 // position/bearing/colour changes — no new Three.js objects are allocated.
+//
+// _globeTHREE is set in initGlobe() from window.THREE (loaded via CDN in
+// index.html before globe.gl).
 
 const _globeSpriteCache = new Map(); // key → { sprite, canvas, texture, ac }
+let   _globeTHREE       = null;      // THREE namespace, extracted from globe.renderer()
 
 // Canvas dimensions for the sprite texture.
 // Width must accommodate the ✈ glyph (left) + label text (right).
@@ -2457,8 +2461,7 @@ function _drawAcSprite(ctx, ac) {
  * If the sprite already exists its texture is redrawn in-place.
  */
 function _upsertAcSprite(ac) {
-  // THREE must be available (it is — globe.gl bundles it and exposes it globally)
-  const THREE = window.THREE;
+  const THREE = _globeTHREE;
   if (!THREE) return null;
 
   let entry = _globeSpriteCache.get(ac.key);
@@ -2561,7 +2564,7 @@ function scheduleGlobeRender() {
  */
 function renderGlobe() {
   if (!globe) return;
-  const THREE = window.THREE;
+  const THREE = _globeTHREE;
   if (!THREE) return;
 
   // ---- Aircraft sprites (customLayerData) ------------------------------------
@@ -2661,6 +2664,10 @@ function initGlobe() {
         selectAircraft(obj.userData.key, false);
       }
     });
+
+  // Three.js is loaded via CDN in index.html before globe.gl, so window.THREE
+  // is always available by the time initGlobe() runs.
+  _globeTHREE = window.THREE;
 
   // Set initial point of view
   globe.pointOfView({ lat: 30, lng: 0, altitude: 2.5 });
