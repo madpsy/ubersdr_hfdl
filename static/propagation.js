@@ -186,18 +186,62 @@ function buildIDWGrid(samples, radius) {
 // ── Heatmap layer ─────────────────────────────────────────────────────────────
 
 // buildHeatmapLayer renders a signal-strength heatmap by binning observations
-// into 1°×1° cells (~100 km) and colouring each cell by average signal level.
+// into grid cells and colouring each cell by average signal level.
 // No IDW interpolation — only cells with actual observations are shown.
-// Colour = sigColour(avg_sig_level), opacity fixed at 0.55.
+// Colour = band colour (BAND_COLOURS), opacity = normalised signal strength.
 // Sources (in priority order): GridCell[] → SigSample[] → PropPath positions.
-function buildHeatmapLayer(paths, gridCells, rawSamples) {
+// serverCellDeg: the cell size reported by /propagation/grid (default 2.0).
+function buildHeatmapLayer(paths, gridCells, rawSamples, serverCellDeg) {
   if (!_heatLayer) _heatLayer = L.layerGroup();
   _heatLayer.clearLayers();
 
-  // cellDeg: size of each rendered cell in degrees (~100 km at mid-latitudes)
-  const cellDeg = 1.0;
+  // cellDeg: use the server's cell size when grid cells are available so the
+  // rendered rectangles exactly cover the binned area (no gaps).
+  // Fall back to 1.0 for the PropPath / rawSamples paths.
+  const cellDeg = (gridCells && gridCells.length > 0 && serverCellDeg)
+    ? serverCellDeg
+    : 1.0;
 
-  // bins: Map of "latBin,lonBin,band" → {sum, count, freq_khz}
+  // ── Fast path: server already averaged the cells — render directly ──────────
+  if (gridCells && gridCells.length > 0) {
+    // Collect signal values for normalisation
+    const filtered = gridCells.filter(c => {
+      if (_propBand !== 'all' && c.band_mhz !== parseInt(_propBand, 10)) return false;
+      if (_hiddenBands.has(c.band_mhz)) return false;
+      return true;
+    });
+
+    const sigVals = filtered.map(c => c.sig_level);
+    const sigMin  = sigVals.length ? Math.min(...sigVals) : -42;
+    const sigMax  = sigVals.length ? Math.max(...sigVals) : -16;
+    const sigSpan = sigMax - sigMin || 1;
+
+    for (const c of filtered) {
+      const bandColour = BAND_COLOURS[c.band_mhz] || '#58a6ff';
+      const t     = Math.max(0, Math.min(1, (c.sig_level - sigMin) / sigSpan));
+      const alpha = 0.25 + t * 0.40;
+      // Cell centre → bottom-left corner
+      const lat0   = c.lat - cellDeg / 2;
+      const lon0   = c.lon - cellDeg / 2;
+      const bounds = [[lat0, lon0], [lat0 + cellDeg, lon0 + cellDeg]];
+
+      const rect = L.rectangle(bounds, {
+        color:       'transparent',
+        fillColor:   bandColour,
+        fillOpacity: alpha,
+        interactive: true,
+        weight:      0,
+      });
+      rect.bindTooltip(
+        `${c.band_mhz} MHz · ${c.sig_level.toFixed(1)} dBFS · ${c.count} obs`,
+        { sticky: true, className: 'prop-map-tooltip' }
+      );
+      _heatLayer.addLayer(rect);
+    }
+    return _heatLayer;
+  }
+
+  // ── Fallback: bin client-side from rawSamples or PropPath positions ──────────
   const bins = new Map();
 
   function addToBin(lat, lon, band, sig, freq) {
@@ -210,15 +254,7 @@ function buildHeatmapLayer(paths, gridCells, rawSamples) {
     b.count += 1;
   }
 
-  if (gridCells && gridCells.length > 0) {
-    // Best: pre-binned server-side cells (already averaged, use as-is)
-    for (const c of gridCells) {
-      if (_propBand !== 'all' && c.band_mhz !== parseInt(_propBand, 10)) continue;
-      if (_hiddenBands.has(c.band_mhz)) continue;
-      addToBin(c.lat, c.lon, c.band_mhz, c.sig_level, c.freq_khz);
-    }
-  } else if (rawSamples && rawSamples.length > 0) {
-    // Good: raw ring-buffer samples — bin client-side
+  if (rawSamples && rawSamples.length > 0) {
     for (const s of rawSamples) {
       if (s.lat == null || s.lon == null || !s.sig_level || !s.freq_khz) continue;
       const band = mhzBand(s.freq_khz);
@@ -227,7 +263,6 @@ function buildHeatmapLayer(paths, gridCells, rawSamples) {
       addToBin(s.lat, s.lon, band, s.sig_level, s.freq_khz);
     }
   } else {
-    // Fallback: PropPath positions
     for (const p of pathsWithPos(paths)) {
       if (!p.sig_level || !p.freq_khz) continue;
       const band = mhzBand(p.freq_khz);
@@ -237,19 +272,14 @@ function buildHeatmapLayer(paths, gridCells, rawSamples) {
     }
   }
 
-  // Render one rectangle per bin.
-  // Colour = band (from BAND_COLOURS), opacity = signal strength.
-  // Opacity range: 0.25 (weak) → 0.65 (strong), map always visible underneath.
-  // Signal range auto-detected from the data so it works across different receivers.
   const sigVals = [...bins.values()].map(b => b.sum / b.count);
   const sigMin  = sigVals.length ? Math.min(...sigVals) : -42;
   const sigMax  = sigVals.length ? Math.max(...sigVals) : -16;
-  const sigSpan = sigMax - sigMin || 1; // avoid div-by-zero if all same
+  const sigSpan = sigMax - sigMin || 1;
 
   for (const b of bins.values()) {
     const avg        = b.sum / b.count;
     const bandColour = BAND_COLOURS[b.band] || '#58a6ff';
-    // Normalise within the actual data range, then map to [0.25, 0.65]
     const t     = Math.max(0, Math.min(1, (avg - sigMin) / sigSpan));
     const alpha = 0.25 + t * 0.40;
     const lat0  = b.latBin * cellDeg;
@@ -785,7 +815,7 @@ if (_contourLayer && propMap.hasLayer(_contourLayer)) _contourLayer.remove();
 if (_polarLayer   && propMap.hasLayer(_polarLayer))   _polarLayer.remove();
 
 if (_propMode === 'heatmap') {
-  buildHeatmapLayer(paths, gridCells, rawSamples);
+  buildHeatmapLayer(paths, gridCells, rawSamples, gridSnap && gridSnap.cell_deg);
   if (_heatLayer) _heatLayer.addTo(propMap);
 } else if (_propMode === 'contours') {
   buildContourLayer(paths, gridCells, rawSamples);
