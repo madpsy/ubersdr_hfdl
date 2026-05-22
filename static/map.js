@@ -2535,23 +2535,6 @@ function makeGlobeGSEl(gs) {
   return el;
 }
 
-/**
- * Check if a lat/lng point is on the visible hemisphere of the globe.
- * Points on the back face are invisible and don't need CSS2DRenderer projection.
- */
-function _isOnVisibleHemisphere(lat, lng) {
-  if (!globe) return true;
-  const pov = globe.pointOfView();
-  const toRad = Math.PI / 180;
-  const ax = Math.cos(lat * toRad) * Math.cos(lng * toRad);
-  const ay = Math.cos(lat * toRad) * Math.sin(lng * toRad);
-  const az = Math.sin(lat * toRad);
-  const cx = Math.cos(pov.lat * toRad) * Math.cos(pov.lng * toRad);
-  const cy = Math.cos(pov.lat * toRad) * Math.sin(pov.lng * toRad);
-  const cz = Math.sin(pov.lat * toRad);
-  return (ax * cx + ay * cy + az * cz) > -0.1; // small margin past the edge
-}
-
 // Pending globe render flag — collapses multiple SSE updates within one
 // animation frame into a single renderGlobe() call.
 let _globeRenderPending = false;
@@ -2575,25 +2558,20 @@ function scheduleGlobeRender() {
  *
  * Uses an element cache so that:
  * - HTML elements are created once and mutated in-place (no DOM churn)
- * - htmlElementsData() is only called when the set of visible keys changes
- * - Viewport culling reduces the CSS2DRenderer per-frame cost
+ * - htmlElementsData() is only called when the set of keys changes (add/remove)
+ * - Position updates mutate the stable dataPoint objects directly — globe.gl
+ *   picks up the new lat/lng on its next render frame automatically
  */
 function renderGlobe() {
   if (!globe) return;
 
-  // ---- Aircraft elements (cached, viewport-culled) ---------------------------
+  // ---- Aircraft elements (cached) --------------------------------------------
 
   const wantedKeys = new Set();
   let   setChanged = false;
 
   for (const ac of Object.values(aircraftData)) {
     if (!ac.lat || !ac.lon) continue;
-    // Viewport culling: skip aircraft on the back face of the globe
-    if (!_isOnVisibleHemisphere(ac.lat, ac.lon)) {
-      // If it was previously visible, mark set as changed
-      if (_globeElCache.has(ac.key)) setChanged = true;
-      continue;
-    }
     wantedKeys.add(ac.key);
 
     let cached = _globeElCache.get(ac.key);
@@ -2759,27 +2737,15 @@ function initGlobe() {
   startGlobeSpin();
 }
 
-// Counter for viewport-cull refresh during spin — re-cull every N frames
-// to update which aircraft are on the visible hemisphere.
-let _spinFrameCount = 0;
-const SPIN_CULL_INTERVAL = 30; // re-cull every 30 frames (~0.5s at 60fps)
-
 function startGlobeSpin() {
   if (globeSpinning || !globe) return;
   globeSpinning = true;
-  _spinFrameCount = 0;
   updateSpinBtn();
   const spinSpeed = 0.08; // degrees per frame (~5°/sec at 60 fps)
   const spin = () => {
     if (!globeSpinning || globeUserInteracting) return;
     const pov = globe.pointOfView();
     globe.pointOfView({ lat: pov.lat, lng: pov.lng + spinSpeed, altitude: pov.altitude }, 0);
-    // Periodically re-cull visible elements as the globe rotates
-    _spinFrameCount++;
-    if (_spinFrameCount >= SPIN_CULL_INTERVAL) {
-      _spinFrameCount = 0;
-      renderGlobe();
-    }
     globeSpinInterval = requestAnimationFrame(spin);
   };
   globeSpinInterval = requestAnimationFrame(spin);
