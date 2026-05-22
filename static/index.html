@@ -442,6 +442,10 @@
 
   </main>
 
+  <!-- Three.js UMD — must load before globe.gl so window.THREE is set;
+       globe.gl uses window.THREE internally and our sprite code needs it too.
+       r167 is the latest Three.js release compatible with globe.gl's >=0.118 <1 peer dep. -->
+  <script src="https://unpkg.com/three@0.167.1/build/three.min.js"></script>
   <!-- globe.gl (CDN) — loaded before map.js so Globe() is available -->
   <script src="https://unpkg.com/globe.gl@2.30.0/dist/globe.gl.min.js"></script>
   <!-- Leaflet JS (CDN) -->
@@ -451,7 +455,7 @@
 
   <script>window.BASE_PATH = "{{.BasePath}}";</script>
   <script src="{{.BasePath}}/app.js?v=3"></script>
-  <script src="{{.BasePath}}/map.js?v=9"></script>
+  <script src="{{.BasePath}}/map.js?v=10"></script>
   <script src="{{.BasePath}}/network.js?v=1"></script>
   <script src="{{.BasePath}}/propagation.js?v=4"></script>
   <script src="{{.BasePath}}/linkquality.js?v=1"></script>

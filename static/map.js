@@ -2098,8 +2098,8 @@ function upsertMarker(ac, fromSSE = false) {
   renderFreqBandControl();
   renderDistanceStats();
 
-  // Keep globe in sync when it's visible
-  if (globeMode && globe) renderGlobe();
+  // Keep globe in sync when it's visible (debounced to one render per frame)
+  if (globeMode && globe) scheduleGlobeRender();
 
   // Auto-fit: only trigger on live SSE updates, and only when nothing is selected.
   // When an aircraft is selected the user has intentionally zoomed in — don't override that.
@@ -2303,8 +2303,8 @@ function handlePurgeEvent(key) {
     renderFreqBandControl();
     renderDistanceStats();
 
-    // Keep globe in sync when it's visible
-    if (globeMode && globe) renderGlobe();
+    // Keep globe in sync when it's visible (debounced to one render per frame)
+    if (globeMode && globe) scheduleGlobeRender();
   }
 }
 
@@ -2401,51 +2401,106 @@ const GLOBE_THEMES = {
   'topology':    '//unpkg.com/three-globe/example/img/earth-topology.png',
 };
 
+// ---- Aircraft sprite cache -------------------------------------------------
+// Aircraft markers are rendered as Three.js Sprites (GPU geometry) rather than
+// HTML elements, eliminating CSS2DRenderer's per-frame DOM write cost entirely.
+// GS markers remain as HTML elements — there are only ~18 of them so the cost
+// is negligible, and they benefit from CSS opacity/label styling.
+//
+// Cache: key → { sprite: THREE.Sprite, canvas: HTMLCanvasElement,
+//                texture: THREE.CanvasTexture, ac: object }
+// Sprites are created once and their canvas texture is updated in-place on
+// position/bearing/colour changes — no new Three.js objects are allocated.
+
+const _globeSpriteCache = new Map(); // key → { sprite, canvas, texture, ac }
+
+// Canvas dimensions for the sprite texture.
+// Width must accommodate the ✈ glyph (left) + label text (right).
+const SPRITE_W = 160;
+const SPRITE_H = 56;
+
 /**
- * Build the HTML element for a plane icon on the globe — identical markup to
- * makePlaneIcon() so the aircraft look exactly the same as on the Leaflet map.
- * Wires hover (tooltip) and click (ac-panel) events.
+ * Draw the aircraft marker onto a canvas context.
+ * Called both when creating a new sprite and when updating an existing one.
  */
-function makeGlobePlaneEl(ac) {
-  const labelText = ac.flight || ac.reg || ac.icao || ac.key || '';
-  const bearing   = ac.bearing || 0;
+function _drawAcSprite(ctx, ac) {
   const colour    = gsColorFor(ac.gs_id);
-  const el = document.createElement('div');
-  el.className = 'ac-marker';
-  el.style.color = colour;
-  el.style.position = 'relative';
-  el.style.pointerEvents = 'auto';
-  el.style.cursor = 'pointer';
-  el.innerHTML =
-    `<span style="display:inline-block;transform:rotate(${bearing - 90}deg);font-size:22px;text-shadow:0 0 6px rgba(0,0,0,0.9)">✈</span>` +
-    (labelText
-      ? `<div class="ac-label">${esc(labelText.toUpperCase())}</div>`
-      : '');
+  const bearing   = ac.bearing || 0;
+  const labelText = (ac.flight || ac.reg || ac.icao || ac.key || '').toUpperCase();
 
-  // Hover: show popup-style tooltip
-  el.addEventListener('mouseenter', (e) => {
-    e.stopPropagation();
-    // Use latest data in case it has been updated since the element was created
-    const live = aircraftData[ac.key] || ac;
-    showGlobeTooltip(buildPopup(live));
-  });
-  el.addEventListener('mouseleave', (e) => {
-    e.stopPropagation();
-    hideGlobeTooltip();
-  });
+  ctx.clearRect(0, 0, SPRITE_W, SPRITE_H);
 
-  // Click: open the aircraft detail side panel (same as Leaflet map click)
-  el.addEventListener('click', (e) => {
-    e.stopPropagation();
-    hideGlobeTooltip();
-    selectAircraft(ac.key, false);
-  });
+  // ✈ glyph — rotated to match bearing, centred in the left half
+  ctx.save();
+  ctx.translate(28, 28);
+  ctx.rotate((bearing - 90) * Math.PI / 180);
+  ctx.font = '26px serif';
+  ctx.fillStyle = colour;
+  // Drop shadow so the icon is readable over any globe texture
+  ctx.shadowColor = 'rgba(0,0,0,0.85)';
+  ctx.shadowBlur  = 5;
+  ctx.fillText('✈', -13, 10);
+  ctx.restore();
 
-  return el;
+  // Label text — right of the glyph
+  if (labelText) {
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillStyle = colour;
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur  = 4;
+    ctx.fillText(labelText, 46, 32);
+  }
+}
+
+/**
+ * Return the cached sprite for an aircraft, creating it if necessary.
+ * If the sprite already exists its texture is redrawn in-place.
+ */
+function _upsertAcSprite(ac) {
+  // THREE must be available (it is — globe.gl bundles it and exposes it globally)
+  const THREE = window.THREE;
+  if (!THREE) return null;
+
+  let entry = _globeSpriteCache.get(ac.key);
+
+  if (!entry) {
+    const canvas  = document.createElement('canvas');
+    canvas.width  = SPRITE_W;
+    canvas.height = SPRITE_H;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter; // avoid mipmap generation cost
+
+    const material = new THREE.SpriteMaterial({
+      map:         texture,
+      depthTest:   false,
+      transparent: true,
+      sizeAttenuation: true, // scale in world units (globe radius = 100)
+    });
+    const sprite = new THREE.Sprite(material);
+    // Globe radius in globe.gl's world space is 100 units.
+    // A scale of 8 world units gives a marker ~40–50px at the default altitude.
+    // Aspect ratio preserves the canvas proportions (SPRITE_W:SPRITE_H).
+    const GLOBE_SCALE = 8;
+    sprite.scale.set(GLOBE_SCALE, GLOBE_SCALE * (SPRITE_H / SPRITE_W), 1);
+    sprite.userData = { key: ac.key, type: 'ac' };
+
+    entry = { sprite, canvas, texture, ac };
+    _globeSpriteCache.set(ac.key, entry);
+  }
+
+  // Always redraw — bearing/colour/label may have changed
+  const ctx = entry.canvas.getContext('2d');
+  _drawAcSprite(ctx, ac);
+  entry.texture.needsUpdate = true;
+  entry.ac = ac;
+
+  return entry;
 }
 
 /**
  * Build the HTML element for a GS marker on the globe.
+ * GS markers stay as HTML elements — there are only ~18 of them so the
+ * CSS2DRenderer cost is negligible, and CSS opacity/label styling is preserved.
  * Wires hover (tooltip) event.
  */
 function makeGlobeGSEl(gs) {
@@ -2476,38 +2531,84 @@ function makeGlobeGSEl(gs) {
   return el;
 }
 
+// Pending globe render flag — collapses multiple SSE updates within one
+// animation frame into a single renderGlobe() call.
+let _globeRenderPending = false;
+
 /**
- * Rebuild the globe's htmlElementsData from the current aircraftData + gsDataMap.
- * Called on every SSE update when in globe mode.
+ * Schedule a globe re-render on the next animation frame.
+ * Safe to call many times per frame — only one render will fire.
+ */
+function scheduleGlobeRender() {
+  if (!globeMode || !globe) return;
+  if (_globeRenderPending) return;
+  _globeRenderPending = true;
+  requestAnimationFrame(() => {
+    _globeRenderPending = false;
+    renderGlobe();
+  });
+}
+
+/**
+ * Sync the globe's custom (sprite) layer and HTML (GS) layer with the current
+ * aircraftData + gsDataMap.
+ *
+ * Aircraft → Three.js Sprites via customLayerData (zero CSS2DRenderer cost).
+ * GS       → HTML elements via htmlElementsData  (~18 elements, negligible).
+ *
+ * Sprites are cached and their textures updated in-place — no new Three.js
+ * objects are allocated on position updates.
  */
 function renderGlobe() {
   if (!globe) return;
+  const THREE = window.THREE;
+  if (!THREE) return;
 
-  // Aircraft HTML elements
-  const acPoints = Object.values(aircraftData)
-    .filter(ac => ac.lat && ac.lon)
-    .map(ac => ({
-      lat:  ac.lat,
-      lng:  ac.lon,
-      ac,
-    }));
+  // ---- Aircraft sprites (customLayerData) ------------------------------------
 
-  // GS HTML elements
-  const gsPoints = Object.values(gsDataMap)
-    .filter(gs => gs.lat && gs.lon)
-    .map(gs => ({
-      lat: gs.lat,
-      lng: gs.lon,
-      gs,
-    }));
+  const wantedKeys = new Set();
+  const acPoints   = [];
+
+  for (const ac of Object.values(aircraftData)) {
+    if (!ac.lat || !ac.lon) continue;
+    wantedKeys.add(ac.key);
+    const entry = _upsertAcSprite(ac);
+    if (entry) {
+      acPoints.push({ lat: ac.lat, lng: ac.lon, key: ac.key, entry });
+    }
+  }
+
+  // Evict sprites for aircraft that have been purged
+  for (const key of _globeSpriteCache.keys()) {
+    if (!wantedKeys.has(key)) {
+      const entry = _globeSpriteCache.get(key);
+      if (entry && entry.sprite.material) {
+        entry.sprite.material.map.dispose();
+        entry.sprite.material.dispose();
+      }
+      _globeSpriteCache.delete(key);
+    }
+  }
 
   globe
-    .htmlElementsData([...acPoints, ...gsPoints])
-    .htmlElement(d => {
-      if (d.ac) return makeGlobePlaneEl(d.ac);
-      if (d.gs) return makeGlobeGSEl(d.gs);
-      return null;
-    })
+    .customLayerData(acPoints)
+    .customThreeObject(d => d.entry.sprite)
+    .customThreeObjectUpdate((obj, d) => {
+      // globe.gl calls this to reposition the object in 3D space — nothing
+      // extra needed here; the sprite texture is already up to date.
+    });
+
+  // ---- GS HTML elements (htmlElementsData) -----------------------------------
+  // Rebuilt on every renderGlobe() call — but only ~18 elements so the
+  // CSS2DRenderer cost is negligible.
+
+  const gsPoints = Object.values(gsDataMap)
+    .filter(gs => gs.lat && gs.lon)
+    .map(gs => ({ lat: gs.lat, lng: gs.lon, gs }));
+
+  globe
+    .htmlElementsData(gsPoints)
+    .htmlElement(d => makeGlobeGSEl(d.gs))
     .htmlLat(d => d.lat)
     .htmlLng(d => d.lng);
 }
@@ -2536,11 +2637,30 @@ function initGlobe() {
     .atmosphereAltitude(0.15)
     .width(container.clientWidth)
     .height(container.clientHeight)
-    // HTML elements layer (aircraft + GS markers)
+    // Custom layer: aircraft sprites (Three.js, no DOM)
+    .customLayerData([])
+    .customThreeObject(() => null)
+    .customThreeObjectUpdate(() => {})
+    // HTML layer: GS markers only (~18 elements)
     .htmlElementsData([])
     .htmlElement(() => null)
     .htmlLat('lat')
-    .htmlLng('lng');
+    .htmlLng('lng')
+    // Raycasting: hover shows popup tooltip, click opens side panel
+    .onObjectHover((obj) => {
+      if (obj && obj.userData && obj.userData.type === 'ac') {
+        const ac = aircraftData[obj.userData.key];
+        if (ac) showGlobeTooltip(buildPopup(ac));
+      } else {
+        hideGlobeTooltip();
+      }
+    })
+    .onObjectClick((obj) => {
+      if (obj && obj.userData && obj.userData.type === 'ac') {
+        hideGlobeTooltip();
+        selectAircraft(obj.userData.key, false);
+      }
+    });
 
   // Set initial point of view
   globe.pointOfView({ lat: 30, lng: 0, altitude: 2.5 });
