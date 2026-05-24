@@ -1128,6 +1128,28 @@ td.empty {
   background: rgba(88, 166, 255, 0.22);
 }
 
+/* Colour-mode select row */
+.map-freqband-ctrl__color-row {
+  margin-bottom: 6px;
+  gap: 6px;
+}
+
+.map-freqband-ctrl__color-select {
+  flex: 1;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 11px;
+  padding: 2px 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.map-freqband-ctrl__color-select:focus {
+  border-color: var(--accent);
+}
+
 /* Push the count badge to the far right inside freq-band rows */
 .map-freqband-ctrl .map-layer-ctrl__row {
   justify-content: space-between;

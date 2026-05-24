@@ -55,6 +55,49 @@ function gsColorFor(gsId) {
   return gsColorMap[gsId];
 }
 
+// ---- Band colour palette ---------------------------------------------------
+// Reuses GS_PALETTE — there are only ~8 active HFDL MHz bands so 16 colours
+// is more than enough.
+const bandColorMap = {}; // MHz int → colour string
+let   bandColorIdx = 0;
+
+function bandColorFor(freqKhz) {
+  if (!freqKhz) return '#aaaaaa'; // unknown frequency — grey
+  const band = Math.floor(freqKhz / 1000);
+  if (!bandColorMap[band]) {
+    bandColorMap[band] = GS_PALETTE[bandColorIdx % GS_PALETTE.length];
+    bandColorIdx++;
+  }
+  return bandColorMap[band];
+}
+
+// ---- Colour mode -----------------------------------------------------------
+// 'gs'   → colour aircraft by ground station (default)
+// 'band' → colour aircraft by MHz band
+let colorMode = 'gs';
+
+/**
+ * Return the display colour for an aircraft, respecting the current colorMode.
+ * GS markers always use gsColorFor() regardless of mode.
+ */
+function acColorFor(ac) {
+  return colorMode === 'band'
+    ? bandColorFor(ac.freq_khz)
+    : gsColorFor(ac.gs_id);
+}
+
+/**
+ * Rebuild every aircraft marker icon with the current colour mode applied.
+ * Called whenever colorMode changes.
+ */
+function rebuildAllMarkerIcons() {
+  for (const [k, marker] of Object.entries(aircraftMarkers)) {
+    const ac = aircraftData[k];
+    if (ac) marker.setIcon(makePlaneIcon(ac, k === selectedKey));
+  }
+  if (globeMode && globe) scheduleGlobeRender();
+}
+
 // ---- Top positions panel ---------------------------------------------------
 const MAX_HISTORY   = 10;
 const posCountStore = {}; // key → posCount for ALL aircraft (never evicted)
@@ -96,6 +139,7 @@ function renderHistory() {
         key,
         label:    acLabel(ac),
         gsId:     ac.gs_id,
+        freq_khz: ac.freq_khz,
         time:     ac.last_seen || Math.floor(Date.now() / 1000),
         posCount,
       };
@@ -106,7 +150,9 @@ function renderHistory() {
     html += '<div class="map-history__empty">No positions yet</div>';
   } else {
     for (const entry of entries) {
-      const colour    = gsColorFor(entry.gsId);
+      const colour    = colorMode === 'band'
+        ? bandColorFor(entry.freq_khz)
+        : gsColorFor(entry.gsId);
       const hasMarker = !!aircraftMarkers[entry.key];
       const clickable = hasMarker ? ' map-history__row--clickable' : '';
       html += `<div class="map-history__row${clickable}" data-key="${esc(entry.key)}">` +
@@ -209,34 +255,56 @@ function flashGSLegend(gsId) {
 function renderLegend() {
   if (!hfdlMap) return;
 
-  // Collect the set of GS IDs that have at least one visible aircraft
-  const activeGS = new Map(); // gs_id → colour
-  for (const ac of Object.values(aircraftData)) {
-    if (ac.gs_id) {
-      activeGS.set(ac.gs_id, gsColorFor(ac.gs_id));
+  let html = '<div class="map-legend">';
+
+  if (colorMode === 'band') {
+    // ---- Band mode: show one swatch per MHz band seen in current aircraft ----
+    const activeBands = new Map(); // MHz int → colour
+    for (const ac of Object.values(aircraftData)) {
+      if (ac.freq_khz) {
+        const band = Math.floor(ac.freq_khz / 1000);
+        activeBands.set(band, bandColorFor(ac.freq_khz));
+      }
+    }
+    if (activeBands.size === 0) {
+      html += '<span class="map-legend__empty">No aircraft</span>';
+    } else {
+      const sorted = [...activeBands.entries()].sort((a, b) => a[0] - b[0]);
+      for (const [band, colour] of sorted) {
+        html += `<div class="map-legend__row">` +
+                `<span class="map-legend__swatch" style="background:${colour}"></span>` +
+                `<span class="map-legend__label">${band} MHz</span>` +
+                `</div>`;
+      }
+    }
+  } else {
+    // ---- GS mode: existing behaviour ----------------------------------------
+    const activeGS = new Map(); // gs_id → colour
+    for (const ac of Object.values(aircraftData)) {
+      if (ac.gs_id) {
+        activeGS.set(ac.gs_id, gsColorFor(ac.gs_id));
+      }
+    }
+    if (activeGS.size === 0) {
+      html += '<span class="map-legend__empty">No aircraft</span>';
+    } else {
+      const sorted = [...activeGS.entries()].sort((a, b) => a[0] - b[0]);
+      for (const [gsId, colour] of sorted) {
+        const name = (typeof gsNames !== 'undefined' && gsNames[gsId])
+          ? gsNames[gsId]
+          : `GS ${gsId}`;
+        const isSelected = selectedGS === gsId;
+        const isFlashing = !!_gsFlashTimers[gsId];
+        const selCls     = isSelected ? ' map-legend__row--selected' : '';
+        const flashCls   = isFlashing ? ' map-legend__row--active'   : '';
+        html += `<div class="map-legend__row map-legend__row--clickable${selCls}${flashCls}" data-gs-id="${gsId}">` +
+                `<span class="map-legend__swatch" style="background:${colour}"></span>` +
+                `<span class="map-legend__label">${esc(name)}</span>` +
+                `</div>`;
+      }
     }
   }
 
-  // Build legend HTML
-  let html = '<div class="map-legend">';
-  if (activeGS.size === 0) {
-    html += '<span class="map-legend__empty">No aircraft</span>';
-  } else {
-    const sorted = [...activeGS.entries()].sort((a, b) => a[0] - b[0]);
-    for (const [gsId, colour] of sorted) {
-      const name = (typeof gsNames !== 'undefined' && gsNames[gsId])
-        ? gsNames[gsId]
-        : `GS ${gsId}`;
-      const isSelected = selectedGS === gsId;
-      const isFlashing = !!_gsFlashTimers[gsId];
-      const selCls     = isSelected ? ' map-legend__row--selected' : '';
-      const flashCls   = isFlashing ? ' map-legend__row--active'   : '';
-      html += `<div class="map-legend__row map-legend__row--clickable${selCls}${flashCls}" data-gs-id="${gsId}">` +
-              `<span class="map-legend__swatch" style="background:${colour}"></span>` +
-              `<span class="map-legend__label">${esc(name)}</span>` +
-              `</div>`;
-    }
-  }
   html += '</div>';
 
   if (!legendControl) {
@@ -356,7 +424,7 @@ function makePlaneIcon(ac, selected) {
     ? `<div class="ac-label">${esc(labelText.toUpperCase())}</div>`
     : '';
   const bearing = ac.bearing || 0;
-  const colour  = gsColorFor(ac.gs_id);
+  const colour  = acColorFor(ac);
   // Dim if:
   // - an aircraft is selected and this isn't it
   // - a GS is selected and this aircraft isn't associated with it
@@ -434,8 +502,9 @@ function loadLayerPrefs() {
 function saveBandPrefs() {
   try {
     localStorage.setItem(BAND_STORAGE_KEY, JSON.stringify({
-      live:   showLiveActivity,
-      filter: freqBandFilter,
+      live:      showLiveActivity,
+      filter:    freqBandFilter,
+      colorMode: colorMode,
     }));
   } catch (_) { /* storage unavailable — ignore */ }
 }
@@ -456,6 +525,7 @@ function loadBandPrefs() {
         if (typeof val === 'boolean') freqBandFilter[parseInt(band, 10)] = val;
       }
     }
+    if (p.colorMode === 'gs' || p.colorMode === 'band') colorMode = p.colorMode;
   } catch (_) { /* corrupt storage — ignore */ }
 }
 
@@ -702,6 +772,8 @@ function renderFreqBandControl() {
   const sorted = [...bands].sort((a, b) => a - b);
 
   const liveChecked = showLiveActivity ? 'checked' : '';
+  const colorModeGs   = colorMode === 'gs'   ? 'selected' : '';
+  const colorModeBand = colorMode === 'band' ? 'selected' : '';
   let html =
     `<div class="map-freqband-ctrl__title">` +
       `Bands` +
@@ -709,7 +781,14 @@ function renderFreqBandControl() {
         `<input type="checkbox" id="freqband-live-cb" ${liveChecked}>` +
         `<span>Live</span>` +
       `</label>` +
-    `</div>`;
+    `</div>` +
+    `<label class="map-layer-ctrl__row map-freqband-ctrl__color-row">` +
+      `<span>Colour by</span>` +
+      `<select id="color-mode-select" class="map-freqband-ctrl__color-select">` +
+        `<option value="gs"   ${colorModeGs}>Ground station</option>` +
+        `<option value="band" ${colorModeBand}>MHz band</option>` +
+      `</select>` +
+    `</label>`;
   if (sorted.length === 0) {
     html += `<div class="map-freqband-ctrl__empty">No aircraft yet</div>`;
   } else {
@@ -744,6 +823,14 @@ function renderFreqBandControl() {
           showLiveActivity = e.target.checked;
           const wrap = liveActivityControl && liveActivityControl.getContainer();
           if (wrap) wrap.style.display = showLiveActivity ? '' : 'none';
+          saveBandPrefs();
+          return;
+        }
+        if (e.target.id === 'color-mode-select') {
+          colorMode = e.target.value;
+          rebuildAllMarkerIcons();
+          renderLegend();
+          renderHistory();
           saveBandPrefs();
           return;
         }
@@ -2066,7 +2153,7 @@ function upsertMarker(ac, fromSSE = false) {
       latlngs.push(L.latLng(ac.lat, ac.lon));
       if (latlngs.length > MAX_TRACK_POINTS) latlngs.splice(0, latlngs.length - MAX_TRACK_POINTS);
       trackPolyline.setLatLngs(latlngs);
-      const trackColor = gsColorFor(ac.gs_id);
+      const trackColor = acColorFor(ac);
       trackPolyline.setStyle({ color: trackColor });
       // Add a new dot for this live position
       if (trackDotLayer) {
@@ -2138,7 +2225,7 @@ function selectAircraft(key, fitBounds = false) {
     .then(r => r.json())
     .then(track => {
       const ac = aircraftData[key];
-      const trackColor = ac ? gsColorFor(ac.gs_id) : '#58a6ff';
+      const trackColor = ac ? acColorFor(ac) : '#58a6ff';
 
       // Draw the polyline and position dots if there are at least 2 points
       if (Array.isArray(track) && track.length >= 2) {
@@ -2435,7 +2522,7 @@ let _globePointsData = [];
 function makeGlobePlaneEl(ac) {
   const labelText = ac.flight || ac.reg || ac.icao || ac.key || '';
   const bearing   = ac.bearing || 0;
-  const colour    = gsColorFor(ac.gs_id);
+  const colour    = acColorFor(ac);
   const el = document.createElement('div');
   el.className = 'ac-marker';
   el.style.color = colour;
@@ -2477,7 +2564,7 @@ function makeGlobePlaneEl(ac) {
  * Only touches the DOM if something actually changed.
  */
 function _updateGlobePlaneEl(el, ac) {
-  const colour    = gsColorFor(ac.gs_id);
+  const colour    = acColorFor(ac);
   const bearing   = ac.bearing || 0;
   const labelText = (ac.flight || ac.reg || ac.icao || ac.key || '').toUpperCase();
 
@@ -2585,7 +2672,7 @@ function renderGlobe() {
     if (!ac.lat || !ac.lon) continue;
     wantedKeys.add(ac.key);
 
-    const color = gsColorFor(ac.gs_id) || '#4af';
+    const color = acColorFor(ac) || '#4af';
 
     // pointsData entry (always built, pushed when spinning)
     newPoints.push({ lat: ac.lat, lng: ac.lon, color, _key: ac.key });
@@ -2699,7 +2786,7 @@ function _globeActivateDotsLayer() {
   // Push current points immediately
   _globePointsData = Object.values(aircraftData)
     .filter(ac => ac.lat && ac.lon)
-    .map(ac => ({ lat: ac.lat, lng: ac.lon, color: gsColorFor(ac.gs_id) || '#4af', _key: ac.key }));
+    .map(ac => ({ lat: ac.lat, lng: ac.lon, color: acColorFor(ac) || '#4af', _key: ac.key }));
   globe.pointsData(_globePointsData);
 
   // htmlElementsData: GS only (no aircraft)
