@@ -74,7 +74,7 @@ function bandColorFor(freqKhz) {
 // ---- Colour mode -----------------------------------------------------------
 // 'gs'   → colour aircraft by ground station (default)
 // 'band' → colour aircraft by MHz band
-let colorMode = 'gs';
+let colorMode = 'band';
 
 /**
  * Return the display colour for an aircraft, respecting the current colorMode.
