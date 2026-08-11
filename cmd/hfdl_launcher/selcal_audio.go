@@ -460,6 +460,54 @@ type selcalChannel struct {
 	rec      *burstRecorder
 	stopOnce sync.Once
 	stopCh   chan struct{}
+
+	// Rolling history of the receiver's per-packet signal measurements, on the
+	// same sample clock the detector reports bursts against.  A decoded call is
+	// then quoted with the receiver's own calibrated level for the moment it was
+	// transmitted, rather than with an FFT-derived figure on a different scale.
+	samplesFed int64
+	snrHist    []snrSample
+	snrHead    int
+}
+
+// snrSample is one packet's receiver-measured signal level, tagged with the
+// stretch of the audio stream it covers.
+type snrSample struct {
+	startSec float64
+	endSec   float64
+	snrDB    float64
+	valid    bool
+}
+
+// selcalSNRHistory is how many packets of signal history to retain.  Audio
+// arrives in ~20 ms packets, so this covers roughly ten seconds — comfortably
+// longer than the ~2.2 s burst plus the detector's reporting lag.
+const selcalSNRHistory = 512
+
+// pushSNR records one packet's measurement.
+func (c *selcalChannel) pushSNR(s snrSample) {
+	if c.snrHist == nil {
+		c.snrHist = make([]snrSample, selcalSNRHistory)
+	}
+	c.snrHist[c.snrHead] = s
+	c.snrHead = (c.snrHead + 1) % selcalSNRHistory
+}
+
+// peakSNR returns the strongest receiver-measured level overlapping the given
+// stretch of stream time.  The peak rather than the mean, because a burst is
+// two tone pulses either side of a silent gap, and it is the tones whose level
+// is being reported.
+func (c *selcalChannel) peakSNR(startSec, endSec float64) (float64, bool) {
+	best, found := 0.0, false
+	for _, s := range c.snrHist {
+		if !s.valid || s.endSec < startSec || s.startSec > endSec {
+			continue
+		}
+		if !found || s.snrDB > best {
+			best, found = s.snrDB, true
+		}
+	}
+	return best, found
 }
 
 func newSelcalChannel(cfg selcalChannelCfg, ubersdrURL, password string, store *selcalStore,
@@ -795,6 +843,18 @@ func (c *selcalChannel) handlePacket(pkt *pcmPacket, floats *[]float64) {
 		c.rec.push(pkt.Samples)
 	}
 
+	// Log this packet's signal level against the stream position it covers,
+	// before feeding the samples on, so a burst completing in this packet can
+	// still look back over its own duration.
+	startSec := float64(c.samplesFed) / float64(pkt.Rate)
+	c.samplesFed += int64(len(pkt.Samples))
+	c.pushSNR(snrSample{
+		startSec: startSec,
+		endSec:   float64(c.samplesFed) / float64(pkt.Rate),
+		snrDB:    pkt.BasebandPowerDB - pkt.NoiseDensityDB,
+		valid:    pkt.HasSignal,
+	})
+
 	*floats = (*floats)[:0]
 	for _, s := range pkt.Samples {
 		*floats = append(*floats, float64(s)/32768.0)
@@ -813,10 +873,16 @@ func (c *selcalChannel) handlePacket(pkt *pcmPacket, floats *[]float64) {
 
 	for _, d := range dets {
 		now := time.Now()
-		log.Printf("selcal[%s]: %s  snr=%.1f dB  offset=%+.1f Hz  span=%.2f s%s",
-			c.cfg.Name(), d.Code, d.SNRDB, d.OffsetHz, d.Duration,
+		// Quote the receiver's own signal level for the moment of the burst.
+		snrDB, hasSNR := c.peakSNR(d.StartSec, d.EndSec)
+		snrText := "n/a"
+		if hasSNR {
+			snrText = fmt.Sprintf("%.1f dB", snrDB)
+		}
+		log.Printf("selcal[%s]: %s  signal=%s  margin=%.1f dB  offset=%+.1f Hz  span=%.2f s%s",
+			c.cfg.Name(), d.Code, snrText, d.MarginDB, d.OffsetHz, d.Duration,
 			map[bool]string{true: "  [SELCAL32]"}[d.Selcal32])
-		c.store.record(c.cfg, d, now)
+		c.store.record(c.cfg, d, snrDB, hasSNR, now)
 		if c.rec != nil {
 			c.rec.save(c.cfg.ID(), d.Code, now)
 		}

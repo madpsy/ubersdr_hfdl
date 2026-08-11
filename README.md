@@ -711,7 +711,23 @@ known location.
 For non-IQ modes the receiver attaches a signal-quality measurement to every
 audio packet, so the dashboard shows a live signal and noise figure in dBFS for
 every configured channel at all times — no listener required.  These are pushed
-over the existing `/events` SSE stream as `selcal_signal` events.
+over the existing `/events` SSE stream as `selcal_signal` events.  The meters
+read empty at 30 dB and full at 60 dB, since an idle HF voice channel already
+sits around 30–35 dB.
+
+A decoded call is quoted with the **peak receiver level measured over the burst
+itself** (`snr_db`), which is the same calibrated scale as the meters — so a
+call and a channel meter can be read against one another.  The peak rather than
+the mean, because a burst is two tone pulses either side of a silent gap.
+
+Each call also carries `margin_db`: how far the weaker of the two tones stood
+above the in-band noise floor, taken from the worse of the two pulses.  That is
+a decode-confidence figure, not a signal report — it carries the FFT's
+processing gain and so reads roughly 13–21 dB above the true audio SNR.  The two
+are kept as separate fields precisely because they are not comparable; the UI
+shows the margin as a tooltip.  When the receiver supplies no measurement
+(protocol version 1, or an older server) `has_snr` is false and only the margin
+is available.
 
 ### Testing against a real receiver
 

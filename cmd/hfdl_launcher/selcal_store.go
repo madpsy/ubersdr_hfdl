@@ -27,18 +27,33 @@ const selcalDedupeWindow = 2500 * time.Millisecond
 const selcalMaxSpots = 500
 
 // SelcalSpotChannel records one channel that carried a burst.
+//
+// SNRDB is the receiver's own signal measurement taken over the burst, on the
+// same calibrated scale as the live channel meters, so the two can be read
+// against one another.  HasSNR is false when the receiver supplied no
+// measurement (protocol version 1, or an older server).
+//
+// MarginDB is the detector's separate confidence figure — how far the weaker
+// tone stood above the in-band noise floor.  It is deliberately not conflated
+// with SNRDB: it carries the FFT's processing gain and so reads far higher
+// than any calibrated signal level.
 type SelcalSpotChannel struct {
-	FreqKHz float64 `json:"freq_khz"`
-	Label   string  `json:"label,omitempty"`
-	SNRDB   float64 `json:"snr_db"`
+	FreqKHz  float64 `json:"freq_khz"`
+	Label    string  `json:"label,omitempty"`
+	SNRDB    float64 `json:"snr_db"`
+	HasSNR   bool    `json:"has_snr"`
+	MarginDB float64 `json:"margin_db"`
 }
 
-// SelcalSpot is one decoded SELCAL call, merged across channels.
+// SelcalSpot is one decoded SELCAL call, merged across channels.  The top-level
+// SNRDB and MarginDB are those of the best copy received.
 type SelcalSpot struct {
 	Time     int64               `json:"time"`
 	Code     string              `json:"code"`
 	Selcal32 bool                `json:"selcal32"`
 	SNRDB    float64             `json:"snr_db"`
+	HasSNR   bool                `json:"has_snr"`
+	MarginDB float64             `json:"margin_db"`
 	OffsetHz float64             `json:"offset_hz"`
 	Channels []SelcalSpotChannel `json:"channels"`
 }
@@ -105,7 +120,8 @@ func newSelcalStore(audioEnabled bool, broadcast func(string)) *selcalStore {
 
 // record ingests one detection, merging it into an open pending spot for the
 // same code or opening a new one.
-func (s *selcalStore) record(cfg selcalChannelCfg, det selcalDetection, when time.Time) {
+func (s *selcalStore) record(cfg selcalChannelCfg, det selcalDetection,
+	snrDB float64, hasSNR bool, when time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -114,7 +130,13 @@ func (s *selcalStore) record(cfg selcalChannelCfg, det selcalDetection, when tim
 	s.lastTime[id] = when.Unix()
 	s.counts[id]++
 
-	entry := SelcalSpotChannel{FreqKHz: cfg.FreqKHz, Label: cfg.Label, SNRDB: round1(det.SNRDB)}
+	entry := SelcalSpotChannel{
+		FreqKHz:  cfg.FreqKHz,
+		Label:    cfg.Label,
+		SNRDB:    round1(snrDB),
+		HasSNR:   hasSNR,
+		MarginDB: round1(det.MarginDB),
+	}
 
 	if p, ok := s.pending[det.Code]; ok {
 		// Same code already in flight — add this channel to it.
@@ -124,8 +146,12 @@ func (s *selcalStore) record(cfg selcalChannelCfg, det selcalDetection, when tim
 			}
 		}
 		p.spot.Channels = append(p.spot.Channels, entry)
-		if det.SNRDB > p.spot.SNRDB {
-			p.spot.SNRDB = round1(det.SNRDB)
+		// The headline figures track the best copy received.
+		if hasSNR && (!p.spot.HasSNR || snrDB > p.spot.SNRDB) {
+			p.spot.SNRDB, p.spot.HasSNR = round1(snrDB), true
+		}
+		if det.MarginDB > p.spot.MarginDB {
+			p.spot.MarginDB = round1(det.MarginDB)
 		}
 		return
 	}
@@ -135,7 +161,9 @@ func (s *selcalStore) record(cfg selcalChannelCfg, det selcalDetection, when tim
 			Time:     when.Unix(),
 			Code:     det.Code,
 			Selcal32: det.Selcal32,
-			SNRDB:    round1(det.SNRDB),
+			SNRDB:    round1(snrDB),
+			HasSNR:   hasSNR,
+			MarginDB: round1(det.MarginDB),
 			OffsetHz: round1(det.OffsetHz),
 			Channels: []SelcalSpotChannel{entry},
 		},

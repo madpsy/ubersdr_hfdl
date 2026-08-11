@@ -32,7 +32,7 @@ func TestSelcalSnapshotEndpoint(t *testing.T) {
 	srv, mgr, store := newTestSelcalServer(t, true, 4)
 
 	store.record(mgr.channels[0].cfg,
-		selcalDetection{Code: "AB-CD", SNRDB: 21.3, OffsetHz: 0.4}, time.Now())
+		selcalDetection{Code: "AB-CD", MarginDB: 41.3, OffsetHz: 0.4}, 47.5, true, time.Now())
 	store.flush("AB-CD") // publish immediately rather than waiting out the dedupe window
 
 	resp, err := http.Get(srv.URL + "/selcal")
@@ -56,6 +56,14 @@ func TestSelcalSnapshotEndpoint(t *testing.T) {
 	}
 	if len(snap.Spots) != 1 || snap.Spots[0].Code != "AB-CD" {
 		t.Fatalf("unexpected spots: %+v", snap.Spots)
+	}
+	// The quoted signal is the receiver's calibrated level, on the same scale as
+	// the channel meters; the detector's margin is carried separately.
+	if snap.Spots[0].SNRDB != 47.5 || !snap.Spots[0].HasSNR {
+		t.Errorf("spot signal = %g (has=%v), want 47.5", snap.Spots[0].SNRDB, snap.Spots[0].HasSNR)
+	}
+	if snap.Spots[0].MarginDB != 41.3 {
+		t.Errorf("spot margin = %g, want 41.3", snap.Spots[0].MarginDB)
 	}
 	// 12 kHz mono µ-law is one byte per sample.
 	if snap.ListenerKbps != 96 {
@@ -183,10 +191,10 @@ func TestSelcalDedupeMergesChannels(t *testing.T) {
 	now := time.Now()
 
 	// The same call keyed simultaneously on two frequencies of one family.
-	store.record(natA, selcalDetection{Code: "AB-CD", SNRDB: 18}, now)
-	store.record(natA2, selcalDetection{Code: "AB-CD", SNRDB: 25}, now)
+	store.record(natA, selcalDetection{Code: "AB-CD", MarginDB: 38}, 41.0, true, now)
+	store.record(natA2, selcalDetection{Code: "AB-CD", MarginDB: 45}, 52.5, true, now)
 	// A duplicate report from a channel already recorded must not add a second entry.
-	store.record(natA, selcalDetection{Code: "AB-CD", SNRDB: 19}, now)
+	store.record(natA, selcalDetection{Code: "AB-CD", MarginDB: 39}, 42.0, true, now)
 	store.flush("AB-CD")
 
 	snap := store.snapshot(nil)
@@ -197,8 +205,11 @@ func TestSelcalDedupeMergesChannels(t *testing.T) {
 	if len(spot.Channels) != 2 {
 		t.Fatalf("expected 2 channels on the merged spot, got %+v", spot.Channels)
 	}
-	if spot.SNRDB != 25 {
-		t.Errorf("merged SNR = %g, want the best of the two (25)", spot.SNRDB)
+	if spot.SNRDB != 52.5 || !spot.HasSNR {
+		t.Errorf("merged signal = %g (has=%v), want the best copy (52.5)", spot.SNRDB, spot.HasSNR)
+	}
+	if spot.MarginDB != 45 {
+		t.Errorf("merged margin = %g, want the best of the two (45)", spot.MarginDB)
 	}
 	if len(events) != 1 {
 		t.Errorf("expected 1 SSE event for the merged spot, got %d", len(events))

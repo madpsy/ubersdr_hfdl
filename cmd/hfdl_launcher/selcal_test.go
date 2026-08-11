@@ -568,3 +568,106 @@ func TestShippedDefaultFreqsAreValid(t *testing.T) {
 	}
 	t.Logf("shipped default: %d channels, one UberSDR session each", len(got))
 }
+
+// TestSpotSignalComesFromReceiverDuringBurst checks that a decoded call is
+// quoted with the receiver's own calibrated level for the moment it was
+// transmitted — not the quiet level either side of it, and not the detector's
+// FFT-derived margin, which sits on an entirely different scale.
+func TestSpotSignalComesFromReceiverDuringBurst(t *testing.T) {
+	const quietSNR, burstSNR = 34.0, 58.0
+
+	store := newSelcalStore(true, func(string) {})
+	ch := newSelcalChannel(
+		selcalChannelCfg{FreqKHz: 8906, Label: "NAT-A", Decode: true},
+		"http://receiver.invalid", "", store, newListenerBudget(0), "", 8)
+
+	samples := synthBurst(t, [2]rune{'A', 'B'}, [2]rune{'C', 'D'}, 0, 0.3)
+
+	// Feed it as packets, labelling each with the level the receiver would have
+	// reported: quiet either side, loud while the tones are actually playing.
+	// synthBurst lays out 0.5 s lead-in, 1.0 s pulse, 0.2 s gap, 1.0 s pulse.
+	const pkt = 240 // 20 ms at 12 kHz, as the receiver sends
+	floats := make([]float64, 0, pkt)
+	for i := 0; i < len(samples); i += pkt {
+		end := i + pkt
+		if end > len(samples) {
+			end = len(samples)
+		}
+		sec := float64(i) / testRate
+		snr := quietSNR
+		if sec >= 0.5 && sec <= 2.7 {
+			snr = burstSNR
+		}
+		pcm := make([]int16, end-i)
+		for j, v := range samples[i:end] {
+			pcm[j] = int16(v * 32767)
+		}
+		ch.handlePacket(&pcmPacket{
+			Samples:         pcm,
+			Rate:            testRate,
+			Channels:        1,
+			BasebandPowerDB: -100 + snr, // power − noise = snr
+			NoiseDensityDB:  -100,
+			HasSignal:       true,
+		}, &floats)
+	}
+
+	store.flush("AB-CD")
+	snap := store.snapshot(nil)
+	if len(snap.Spots) != 1 {
+		t.Fatalf("expected 1 decoded call, got %d", len(snap.Spots))
+	}
+	spot := snap.Spots[0]
+
+	if !spot.HasSNR {
+		t.Fatal("spot carries no receiver signal level")
+	}
+	if math.Abs(spot.SNRDB-burstSNR) > 0.5 {
+		t.Errorf("spot signal = %.1f dB, want the burst level %.1f (not the quiet %.1f)",
+			spot.SNRDB, burstSNR, quietSNR)
+	}
+	// The margin is a separate, uncalibrated figure and must not have been
+	// substituted for the signal level.
+	if spot.MarginDB == spot.SNRDB {
+		t.Error("margin and signal are identical — the two measurements have been conflated")
+	}
+	if spot.MarginDB <= 0 {
+		t.Errorf("margin = %g, want a positive decode margin", spot.MarginDB)
+	}
+}
+
+// TestSpotSignalAbsentWithoutReceiverData covers an older server that sends no
+// signal-quality fields: the call must still decode, and simply report no level
+// rather than inventing one.
+func TestSpotSignalAbsentWithoutReceiverData(t *testing.T) {
+	store := newSelcalStore(true, func(string) {})
+	ch := newSelcalChannel(
+		selcalChannelCfg{FreqKHz: 8906, Decode: true},
+		"http://receiver.invalid", "", store, newListenerBudget(0), "", 8)
+
+	samples := synthBurst(t, [2]rune{'A', 'B'}, [2]rune{'C', 'D'}, 0, 0.3)
+	floats := make([]float64, 0, 240)
+	for i := 0; i < len(samples); i += 240 {
+		end := i + 240
+		if end > len(samples) {
+			end = len(samples)
+		}
+		pcm := make([]int16, end-i)
+		for j, v := range samples[i:end] {
+			pcm[j] = int16(v * 32767)
+		}
+		ch.handlePacket(&pcmPacket{Samples: pcm, Rate: testRate, Channels: 1}, &floats)
+	}
+
+	store.flush("AB-CD")
+	snap := store.snapshot(nil)
+	if len(snap.Spots) != 1 {
+		t.Fatalf("expected 1 decoded call, got %d", len(snap.Spots))
+	}
+	if snap.Spots[0].HasSNR {
+		t.Error("reported a signal level despite the receiver supplying none")
+	}
+	if snap.Spots[0].MarginDB <= 0 {
+		t.Error("decode margin should still be reported")
+	}
+}

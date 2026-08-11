@@ -271,9 +271,21 @@ type toneRun struct {
 type selcalDetection struct {
 	Code     string
 	Selcal32 bool
-	SNRDB    float64
 	OffsetHz float64
 	Duration float64 // seconds from start of pulse 1 to end of pulse 2
+
+	// MarginDB is how far the weaker tone stood above the in-band noise floor,
+	// taken from the worse of the two pulses.  It measures how comfortably the
+	// burst cleared the detection thresholds, and carries the FFT's processing
+	// gain, so it reads well above the audio SNR and is not comparable with the
+	// receiver's calibrated signal level.  Reported as decode confidence only —
+	// the signal level quoted for a call comes from the receiver instead.
+	MarginDB float64
+
+	// StartSec and EndSec bracket the burst on the detector's sample clock, so
+	// the receiver's own signal measurements can be looked up for that window.
+	StartSec float64
+	EndSec   float64
 }
 
 // selcalDetector consumes a mono audio stream and emits decoded bursts.
@@ -503,9 +515,11 @@ func (d *selcalDetector) closeRun(nowSec float64) *selcalDetection {
 				det := &selcalDetection{
 					Code:     code,
 					Selcal32: isSelcal32(d.prev.pair, run.pair),
-					SNRDB:    math.Min(d.prev.snrDB, run.snrDB),
+					MarginDB: math.Min(d.prev.snrDB, run.snrDB),
 					OffsetHz: (d.prev.offsetHz + run.offsetHz) / 2,
 					Duration: span,
+					StartSec: d.prev.startSec,
+					EndSec:   run.endSec + d.windowSec(),
 				}
 				// A repeated call is pulse1,pulse2,pause,pulse1,pulse2 — drop
 				// the pending state so pulse 2 cannot also start a new code.

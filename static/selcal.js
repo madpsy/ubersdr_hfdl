@@ -18,6 +18,14 @@
 
 const SELCAL_MAX_SPOTS = 500;
 
+// Signal meter scaling, in dB of baseband power over noise density as reported
+// by the receiver.  An idle HF voice channel sits around 30–35 dB, so the bar
+// starts empty there rather than at 0; a strong signal reaches 60.
+const SELCAL_SNR_MIN    = 30; // bar empty at or below
+const SELCAL_SNR_MAX    = 60; // bar full at or above
+const SELCAL_SNR_OK     = 40; // amber above this
+const SELCAL_SNR_STRONG = 50; // green above this
+
 // Newest first — mirrors the order /selcal returns.
 let selcalSpots = [];
 let selcalChannels = [];
@@ -183,16 +191,25 @@ function updateSelcalAudioUI() {
 
 // ---- Rendering -------------------------------------------------------------
 
+// selcalSnrClass grades a calibrated signal level on the same thresholds as the
+// channel meters, so a figure quoted for a call and one shown on a meter mean
+// the same thing.
+function selcalSnrClass(snr) {
+  if (snr >= SELCAL_SNR_STRONG) return 'selcal-snr selcal-snr--strong';
+  if (snr >= SELCAL_SNR_OK) return 'selcal-snr selcal-snr--ok';
+  return 'selcal-snr selcal-snr--weak';
+}
+
 function selcalSignalBar(ch) {
   if (!ch.connected) return '<span class="selcal-sig-none">—</span>';
   // snr_db is baseband power minus noise density, as measured by the receiver
   // and delivered on every audio packet.
   const snr = ch.snr_db || 0;
-  // 0–40 dB maps to the full bar.
-  const pct = Math.max(0, Math.min(100, (snr / 40) * 100));
+  const span = SELCAL_SNR_MAX - SELCAL_SNR_MIN;
+  const pct = Math.max(0, Math.min(100, ((snr - SELCAL_SNR_MIN) / span) * 100));
   let cls = 'weak';
-  if (snr >= 25) cls = 'strong';
-  else if (snr >= 12) cls = 'ok';
+  if (snr >= SELCAL_SNR_STRONG) cls = 'strong';
+  else if (snr >= SELCAL_SNR_OK) cls = 'ok';
   const title = `Signal ${(ch.level_db || 0).toFixed(1)} dBFS, noise ${(ch.noise_db || 0).toFixed(1)} dBFS`;
   return `<span class="selcal-sig" title="${esc(title)}">
     <span class="selcal-sig-bar"><span class="selcal-sig-fill selcal-sig-fill--${cls}" style="width:${pct.toFixed(0)}%"></span></span>
@@ -308,15 +325,22 @@ function renderSelcalSpots() {
 
   tbody.innerHTML = rows.map(s => {
     const heard = (s.channels || []).map(c => {
-      const t = c.label ? `${c.freq_khz} kHz (${c.label})` : `${c.freq_khz} kHz`;
-      return `<span class="selcal-chip" title="${esc(t)} — ${c.snr_db.toFixed(1)} dB">${c.freq_khz}</span>`;
+      const where = c.label ? `${c.freq_khz} kHz (${c.label})` : `${c.freq_khz} kHz`;
+      const lvl = c.has_snr ? `${c.snr_db.toFixed(1)} dB signal` : 'signal not measured';
+      return `<span class="selcal-chip" title="${esc(where)} — ${lvl}, ${c.margin_db.toFixed(1)} dB decode margin">${c.freq_khz}</span>`;
     }).join('');
     const badge = s.selcal32 ? '<span class="selcal-badge selcal-badge--32">SELCAL32</span>' : '';
-    return `<tr>
+    // Signal is the receiver's own measurement over the burst — the same scale
+    // as the channel meters.  Margin is the detector's separate confidence
+    // figure and is shown as a tooltip rather than a second column.
+    const snr = s.has_snr
+      ? `<span class="${selcalSnrClass(s.snr_db)}">${s.snr_db.toFixed(1)} dB</span>`
+      : '<span class="selcal-muted">—</span>';
+    return `<tr title="Decode margin ${s.margin_db.toFixed(1)} dB above the in-band noise floor">
       <td>${fmtDT(s.time)}</td>
       <td><span class="selcal-code">${esc(s.code)}</span> ${badge}</td>
       <td class="selcal-chips">${heard}</td>
-      <td>${s.snr_db.toFixed(1)} dB</td>
+      <td>${snr}</td>
       <td>${s.offset_hz > 0 ? '+' : ''}${s.offset_hz.toFixed(1)} Hz</td>
     </tr>`;
   }).join('');

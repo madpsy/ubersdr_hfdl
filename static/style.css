@@ -3505,3 +3505,12 @@ td.empty {
 .selcal-listeners--full {
   color: var(--yellow);
 }
+
+.selcal-snr {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.selcal-snr--weak   { color: var(--red); }
+.selcal-snr--ok     { color: var(--yellow); }
+.selcal-snr--strong { color: var(--green); }
