@@ -172,8 +172,10 @@ type applyRequest struct {
 //	POST /apply/frequencies/latest  — Fetch latest from ubersdr.org, write to file, then exit
 const defaultFreqURL = "https://ubersdr.org/hfdl/hfdl_frequencies.jsonl"
 
-func startWebServer(port int, staticDir string, store *statsStore, instances []*instance, groups []freqGroup, disabledFreqs []int, extraArgs []string, freqURL string, configPass string, ubersdrURL string, exitCh chan<- struct{}) {
+func startWebServer(port int, staticDir string, store *statsStore, instances []*instance, groups []freqGroup, disabledFreqs []int, extraArgs []string, freqURL string, configPass string, ubersdrURL string, exitCh chan<- struct{}, selcalMgr *selcalManager, selcalSt *selcalStore, selcalAudio bool) {
 	mux := http.NewServeMux()
+
+	registerSelcalRoutes(mux, selcalMgr, selcalSt, selcalAudio)
 
 	// Derive the writable file path from a file:// freqURL, if applicable.
 	// Apply endpoints are only active when both configPass is set AND freqURL

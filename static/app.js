@@ -1164,6 +1164,14 @@ function handleSSEEvent(raw) {
   } else if (type === 'gs_event') {
     // Phase 1c: ground station state change — show toast and log to Events tab
     handleGSEvent(data);
+
+  } else if (type === 'selcal') {
+    // Decoded selective call from an HF voice channel — delegate to selcal.js
+    if (typeof addSelcalSpot === 'function') addSelcalSpot(data);
+
+  } else if (type === 'selcal_signal') {
+    // Live signal levels for every configured SELCAL channel
+    if (typeof updateSelcalSignals === 'function') updateSelcalSignals(data);
   }
 }
 

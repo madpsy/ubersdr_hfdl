@@ -22,6 +22,36 @@ services:
       # creates the host directory.  To enable recording, just uncomment:
       # IQ_RECORD_DIR: "/iq_recordings"
       # IQ_RECORD_SECONDS: "30"
+      #
+      # SELCAL — monitors HF aeronautical voice channels, decodes SELCAL /
+      # SELCAL32 selective calls, and lets dashboard users listen live.
+      #
+      # Format: kHz[:label[:audio]], comma-separated.  Set to "" to disable.
+      # Costs one UberSDR session per frequency listed, plus roughly 190 kbit/s
+      # each from the receiver.  Browser listeners are fanned out from this
+      # container, so they cost no extra UberSDR sessions.
+      #
+      # The default set covers Shannon Aeradio (Shanwick) — the station that
+      # transmits the SELCAL — spread across three bands so at least one is open
+      # at any hour: 5598 at night, 8864/8879/8906 around the clock, 13306 by day.
+      # SELCAL_FREQS: "5598:NAT-A,8864:NAT-B,8879:NAT-C,8906:NAT-A,13306:NAT-A"
+      #
+      # A ":audio" suffix relays a channel to listeners without decoding it.
+      # Shannon Volmet carries no SELCAL, but is a continuous broadcast — handy
+      # for confirming the audio path works without waiting for a call:
+      #   SELCAL_FREQS: "8906:NAT-A,5505:Shannon Volmet:audio"
+      #
+      # Listener cap is the TOTAL across all channels, since upload bandwidth is
+      # shared.  Each listener costs 96 kbit/s, so 10 = ~960 kbit/s worst case.
+      # SELCAL_MAX_LISTENERS: "10"
+      #
+      # Set to 0 to decode SELCAL but not relay any audio to dashboard users:
+      # SELCAL_AUDIO: "1"
+      #
+      # Saves a WAV of each detection — useful when tuning the decoder.
+      # Needs a matching volume mount, as per IQ_RECORD_DIR above:
+      # SELCAL_RECORD_DIR: "/selcal_recordings"
+      # SELCAL_RECORD_SECONDS: "8"
     networks:
       - sdr-network
     logging:

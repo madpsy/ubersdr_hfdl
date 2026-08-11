@@ -510,6 +510,11 @@ independently sized.
 | `-web-port` | `6090` | Port for the web statistics server (`0` = disabled) |
 | `-web-static` | `/usr/local/share/hfdl_launcher/static` | Path to static web files directory |
 | `-dry-run` | | Print planned instances and commands without launching |
+| `-selcal-freqs` | *(disabled)* | HF voice channels to monitor for SELCAL: `kHz[:label[:audio]]`, comma-separated |
+| `-selcal-audio` | `true` | Relay channel audio to dashboard listeners |
+| `-selcal-max-listeners` | `10` | Maximum simultaneous listeners **across all channels** (`0` = unlimited) |
+| `-selcal-record-dir` | *(disabled)* | Directory to write a WAV of each SELCAL detection |
+| `-selcal-record-seconds` | `8` | Length of the audio window saved per detection |
 
 Any arguments after `--` are passed verbatim to **every** dumphfdl instance.
 
@@ -525,6 +530,8 @@ Any arguments after `--` are passed verbatim to **every** dumphfdl instance.
 | `GET /` | HTML dashboard — per-frequency stats table and live message feed |
 | `GET /stats` | JSON snapshot of all statistics (total messages, per-frequency counts, signal levels, last 200 decoded messages) |
 | `GET /events` | Server-Sent Events stream — each decoded message is pushed as a JSON `data:` event in real time |
+| `GET /selcal` | JSON snapshot of the SELCAL channels and decoded calls (only meaningful when `-selcal-freqs` is set) |
+| `GET /selcal/audio?ch=<kHz>` | WebSocket — live mono 8-bit µ-law audio for one channel |
 
 The port is set with `-web-port` (flag) or `WEB_PORT` (env var when using Docker).
 Set to `0` to disable the server entirely.
@@ -610,6 +617,114 @@ Each pipeline is supervised independently.  If `ubersdr_iq` disconnects or
 crashes, the corresponding `dumphfdl` process is killed and the pipeline is
 restarted after a **10 second** delay.  A clean shutdown (Ctrl+C / SIGTERM)
 sets a stop flag that suppresses the auto-restart.
+
+---
+
+## SELCAL / SELCAL32
+
+`hfdl_launcher` can also monitor HF **aeronautical voice** channels, decode
+SELCAL selective calls in real time, and let dashboard users listen live.  This
+is entirely separate from HFDL — it uses its own USB receiver sessions.
+
+The shipped `docker-compose.yml` **enables this by default** on five Shannon
+Aeradio (Shanwick) frequencies.  Set `SELCAL_FREQS: ""` to turn it off; the
+launcher itself does nothing unless `-selcal-freqs` / `SELCAL_FREQS` is set, so
+the tab disappears from the dashboard entirely when it is empty.
+
+```
+UberSDR server
+     │  WebSocket (usb, pcm-zstd, version 2) — one session per frequency
+     ▼
+hfdl_launcher ──┬──▶ SELCAL detector  ──▶ /selcal, /events   (always running)
+                └──▶ µ-law relay      ──▶ /selcal/audio      (on demand)
+```
+
+Every configured channel is decoded **continuously**, whether or not anyone is
+listening.  Browser listeners attach to the launcher rather than to the
+receiver, so the number of receiver sessions is fixed by the configuration and
+does not grow with the audience.
+
+### Configuration
+
+```yaml
+# Comma-separated  kHz[:label[:audio]].  Empty = feature disabled.
+SELCAL_FREQS: "5598:NAT-A,8864:NAT-B,8879:NAT-C,8906:NAT-A,13306:NAT-A"
+```
+
+A third field of `audio` relays a channel to listeners without running the
+decoder on it — useful for a continuous broadcast such as
+`5505:Shannon Volmet:audio`, which carries no SELCAL but is a convenient way to
+confirm the audio path works without waiting for a call.
+
+| Env var | Flag | Description |
+|---------|------|-------------|
+| `SELCAL_FREQS` | `-selcal-freqs` | Channels to monitor (unset = disabled) |
+| `SELCAL_AUDIO` | `-selcal-audio` | Set to `0` to decode only and not relay audio |
+| `SELCAL_MAX_LISTENERS` | `-selcal-max-listeners` | Cap on **total** concurrent listeners |
+| `SELCAL_RECORD_DIR` | `-selcal-record-dir` | Save a WAV of each detection (unset = off) |
+| `SELCAL_RECORD_SECONDS` | `-selcal-record-seconds` | Audio window saved per detection |
+
+The suggested default set covers **Shannon Aeradio** (Shanwick), which is the
+station that transmits the SELCAL, spread across three bands so that at least
+one is open at any hour: 5598 kHz at night, 8906/8864/8879 kHz around the clock,
+13306 kHz by day.
+
+### Bandwidth
+
+Audio is relayed as 8-bit G.711 µ-law rather than 16-bit PCM, so each listener
+costs **96 kbit/s** of upload at the 12 kHz USB sample rate.  The listener cap is
+deliberately a **single receiver-wide budget** rather than a per-channel limit,
+because upload bandwidth is shared across channels — ten listeners on one
+frequency and one listener on each of ten frequencies cost exactly the same to
+serve.  At the default cap of 10 the worst case is ~960 kbit/s.  The dashboard
+shows the current total and the committed upload rate.
+
+Receiving costs roughly 190 kbit/s per configured channel, regardless of
+listeners.
+
+### How the decoder works
+
+A SELCAL transmission is two 1-second tone pulses, each carrying two
+simultaneous tones, separated by a 0.2-second gap.  The 32-tone table from ICAO
+Annex 10 Vol III Table 3-1 (Amendment 91) is used, so classic 16-tone codes and
+the expanded SELCAL32 codes are both decoded by the same path; a call is flagged
+`SELCAL32` when any of its four characters is from the expanded `T`–`9` set.
+
+Audio arrives already demodulated, so a tone at audio frequency *f* is simply a
+spectral line at *f*.  Each analysis frame is Hann-windowed and transformed,
+peaks are located to sub-bin accuracy by parabolic interpolation, and a frame is
+accepted only when exactly two peaks dominate: both well clear of the in-band
+noise floor, within 8 dB of each other, and at least 8 dB above any third peak.
+That last margin is what rejects harmonics and intermodulation products, which
+the 15% audio distortion permitted by the standard can place close to real tone
+frequencies.  Both tones must also share the same small frequency offset, since
+a receiver or transmitter error shifts every tone by the same number of Hz.
+
+Ground stations key SELCAL simultaneously on several frequencies of whichever
+family is in use, so the same call arriving on more than one monitored channel
+is collapsed into a single entry listing every frequency it was heard on.  That
+makes each call a simultaneous propagation measurement from a transmitter at a
+known location.
+
+### Signal levels
+
+For non-IQ modes the receiver attaches a signal-quality measurement to every
+audio packet, so the dashboard shows a live signal and noise figure in dBFS for
+every configured channel at all times — no listener required.  These are pushed
+over the existing `/events` SSE stream as `selcal_signal` events.
+
+### Testing against a real receiver
+
+```bash
+SELCAL_LIVE_URL=https://receiver.example.org \
+SELCAL_LIVE_FREQS=8906:NAT-A,5505:Volmet \
+SELCAL_LIVE_SECONDS=60 \
+  go test ./cmd/hfdl_launcher/ -run TestLiveReceiver -v
+```
+
+This connects for real and checks the WebSocket handshake, the pcm-zstd/version-2
+negotiation, and that audio and signal-quality data are flowing.  The rest of
+the test suite is entirely offline.
 
 ---
 

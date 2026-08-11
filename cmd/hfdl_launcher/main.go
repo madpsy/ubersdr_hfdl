@@ -59,6 +59,14 @@ func printUsage(w io.Writer) {
 	fmt.Fprintf(w, "                     (default: /usr/local/share/hfdl_launcher/static)\n")                                //nolint:errcheck
 	fmt.Fprintf(w, "  -iq-record-dir     Directory to write IQ WAV recordings (enables recording when set)\n")               //nolint:errcheck
 	fmt.Fprintf(w, "  -iq-record-seconds Duration of each IQ recording in seconds (default: 30)\n\n")                        //nolint:errcheck
+	fmt.Fprintf(w, "SELCAL (HF voice channels — disabled unless -selcal-freqs is set):\n")                                   //nolint:errcheck
+	fmt.Fprintf(w, "  -selcal-freqs      Channels to monitor: kHz[:label[:audio]], comma-separated\n")                       //nolint:errcheck
+	fmt.Fprintf(w, "                     e.g. \"5598:NAT-A,8906:NAT-A,5505:Shannon Volmet:audio\"\n")                        //nolint:errcheck
+	fmt.Fprintf(w, "                     One UberSDR session per channel; listeners are fanned out locally.\n")              //nolint:errcheck
+	fmt.Fprintf(w, "  -selcal-audio      Relay channel audio to browser listeners (default: true)\n")                        //nolint:errcheck
+	fmt.Fprintf(w, "  -selcal-max-listeners  Max simultaneous listeners per channel (default: 10, 0 = unlimited)\n")         //nolint:errcheck
+	fmt.Fprintf(w, "  -selcal-record-dir     Directory for a WAV of each detection (recording off when unset)\n")            //nolint:errcheck
+	fmt.Fprintf(w, "  -selcal-record-seconds Audio window saved per detection (default: 8)\n\n")                             //nolint:errcheck
 	fmt.Fprintf(w, "Extra dumphfdl arguments:\n")                                                                            //nolint:errcheck
 	fmt.Fprintf(w, "  Any arguments after -- are passed verbatim to every dumphfdl instance.\n")                             //nolint:errcheck
 	fmt.Fprintf(w, "  Note: --output decoded:json:file:path=- is always injected automatically.\n\n")                        //nolint:errcheck
@@ -133,6 +141,36 @@ func run(cfg config) error {
 	}()
 	go store.purgeStaleAircraft()
 
+	// SELCAL — one USB receiver session per configured HF voice channel.
+	// Decoding runs continuously on every enabled channel; browser listeners
+	// attach to the launcher rather than to the receiver, so the number of
+	// receiver sessions is fixed by the config and not by the audience.
+	var selcalMgr *selcalManager
+	selcalSt := newSelcalStore(cfg.selcalAudio, store.broadcast)
+	if len(cfg.selcalChannels) > 0 {
+		if cfg.selcalRecordDir != "" {
+			if err := os.MkdirAll(cfg.selcalRecordDir, 0o755); err != nil {
+				log.Printf("warning: cannot create SELCAL recording directory %s: %v — recording disabled",
+					cfg.selcalRecordDir, err)
+				cfg.selcalRecordDir = ""
+			} else {
+				log.Printf("SELCAL burst recording enabled: directory=%s window=%ds",
+					cfg.selcalRecordDir, cfg.selcalRecordSecs)
+			}
+		}
+		selcalMgr = newSelcalManager(cfg.selcalChannels, cfg.ubersdrURL, cfg.password, selcalSt,
+			cfg.selcalMaxListeners, cfg.selcalRecordDir, cfg.selcalRecordSecs)
+		log.Printf("SELCAL enabled on %d channel(s) (audio relay: %v)",
+			len(cfg.selcalChannels), cfg.selcalAudio)
+		for _, c := range cfg.selcalChannels {
+			mode := "decode + audio"
+			if !c.Decode {
+				mode = "audio only"
+			}
+			log.Printf("  %8.1f kHz USB  %-20s  %s", c.FreqKHz, c.Name(), mode)
+		}
+	}
+
 	// exitCh: Apply endpoints send on this to trigger a clean exit so Docker
 	// restarts the container and re-reads the updated frequency file.
 	exitCh := make(chan struct{}, 1)
@@ -167,7 +205,11 @@ func run(cfg config) error {
 	// Web server — started after instances are built so the handler can read
 	// live health fields from each *instance at request time.
 	if cfg.webPort > 0 {
-		go startWebServer(cfg.webPort, cfg.webStaticDir, store, instances, groups, fetched.DisabledFreqs, cfg.extraHFDLArgs, cfg.freqURL, cfg.configPass, cfg.ubersdrURL, exitCh)
+		go startWebServer(cfg.webPort, cfg.webStaticDir, store, instances, groups, fetched.DisabledFreqs, cfg.extraHFDLArgs, cfg.freqURL, cfg.configPass, cfg.ubersdrURL, exitCh, selcalMgr, selcalSt, cfg.selcalAudio)
+	}
+
+	if selcalMgr != nil {
+		selcalMgr.start()
 	}
 
 	for _, inst := range instances {
@@ -189,6 +231,9 @@ func run(cfg config) error {
 		log.Printf("frequency config updated — exiting for restart…")
 	}
 
+	if selcalMgr != nil {
+		selcalMgr.stop()
+	}
 	for _, inst := range instances {
 		inst.stop()
 	}
@@ -212,6 +257,12 @@ type config struct {
 	webStaticDir    string
 	iqRecordDir     string
 	iqRecordSeconds int
+
+	selcalChannels     []selcalChannelCfg
+	selcalAudio        bool
+	selcalMaxListeners int
+	selcalRecordDir    string
+	selcalRecordSecs   int
 }
 
 func main() {
@@ -229,6 +280,12 @@ func main() {
 		webStatic       = flag.String("web-static", "/usr/local/share/hfdl_launcher/static", "Path to static web files directory")
 		iqRecordDir     = flag.String("iq-record-dir", "", "Directory to write IQ WAV recordings (enables recording when set)")
 		iqRecordSeconds = flag.Int("iq-record-seconds", 30, "Duration of each IQ recording in seconds")
+
+		selcalFreqs        = flag.String("selcal-freqs", "", "HF voice channels to monitor for SELCAL: kHz[:label[:audio]], comma-separated")
+		selcalAudio        = flag.Bool("selcal-audio", true, "Relay SELCAL channel audio to browser listeners")
+		selcalMaxListeners = flag.Int("selcal-max-listeners", 10, "Maximum simultaneous listeners per channel (0 = unlimited)")
+		selcalRecordDir    = flag.String("selcal-record-dir", "", "Directory to write a WAV of each SELCAL detection (enables recording when set)")
+		selcalRecordSecs   = flag.Int("selcal-record-seconds", 8, "Length of the audio window saved per SELCAL detection")
 	)
 	flag.Usage = func() { printUsage(os.Stderr) }
 	flag.Parse()
@@ -249,6 +306,12 @@ func main() {
 		}
 	}
 
+	selcalChannels, err := parseSelcalFreqs(*selcalFreqs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: -selcal-freqs: %v\n", err) //nolint:errcheck
+		os.Exit(1)
+	}
+
 	if err := run(config{
 		ubersdrURL:      *ubersdrURL,
 		password:        *password,
@@ -264,6 +327,12 @@ func main() {
 		webStaticDir:    *webStatic,
 		iqRecordDir:     *iqRecordDir,
 		iqRecordSeconds: *iqRecordSeconds,
+
+		selcalChannels:     selcalChannels,
+		selcalAudio:        *selcalAudio,
+		selcalMaxListeners: *selcalMaxListeners,
+		selcalRecordDir:    *selcalRecordDir,
+		selcalRecordSecs:   *selcalRecordSecs,
 	}); err != nil {
 		log.Fatalf("error: %v", err)
 	}

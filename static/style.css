@@ -3335,3 +3335,173 @@ td.empty {
   padding: 10px 14px;
   overflow: auto;
 }
+
+/* ---- SELCAL tab ---- */
+
+#selcal-body {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.selcal-heading {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+#selcal-channels-table {
+  margin-bottom: 24px;
+}
+
+.selcal-toolbar-spacer {
+  flex: 1;
+}
+
+.selcal-vol-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.selcal-vol-wrap input[type="range"] {
+  width: 90px;
+  accent-color: var(--accent);
+}
+
+.selcal-listen-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 5px 9px;
+}
+
+.selcal-listen-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.selcal-listen-btn:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.selcal-listen-btn--on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.selcal-freq {
+  font-family: var(--font-mono);
+}
+
+.selcal-code {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.selcal-muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.selcal-state {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.selcal-state--up   { color: var(--green); }
+.selcal-state--down { color: var(--red); }
+
+.selcal-badge {
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.selcal-badge--32 {
+  background: rgba(210, 153, 34, 0.18);
+  color: var(--yellow);
+}
+
+.selcal-badge--audio {
+  background: rgba(139, 148, 158, 0.18);
+  color: var(--muted);
+}
+
+.selcal-sig {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.selcal-sig-bar {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  display: inline-block;
+  height: 8px;
+  overflow: hidden;
+  width: 70px;
+}
+
+.selcal-sig-fill {
+  display: block;
+  height: 100%;
+  transition: width 0.3s;
+}
+
+.selcal-sig-fill--weak   { background: var(--red); }
+.selcal-sig-fill--ok     { background: var(--yellow); }
+.selcal-sig-fill--strong { background: var(--green); }
+
+.selcal-sig-val {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.selcal-sig-none {
+  color: var(--muted);
+}
+
+.selcal-chips {
+  white-space: normal;
+}
+
+.selcal-chip {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin: 1px 3px 1px 0;
+  padding: 1px 5px;
+}
+
+.selcal-listeners {
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+}
+
+.selcal-listeners--full {
+  color: var(--yellow);
+}
