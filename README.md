@@ -739,11 +739,18 @@ and never affects decoding, which continues on every channel regardless.
 The bottom of the range is "Off" rather than a 30 dB gate, since an idle channel
 already sits at 30-35 dB and a gate there would never close.
 
-**Auto** parks the threshold at that channel's average level over the last two
-seconds -- in other words at the current noise floor, so anything above ambient
-opens the gate.  A 2 dB hysteresis band and a 0.4 s hang timer stop it chattering
-when the signal sits near the threshold, which matters precisely because Auto
-puts it there deliberately.
+**Auto** sets the threshold to **3 dB above that channel's average level over
+the last 3 seconds** -- the average being the ambient noise floor, so the margin
+puts the gate just clear of it and anything louder than ambient opens it.  Press
+it during a quiet moment: taken mid-transmission the average includes the speech
+itself and the threshold lands too high.
+
+The gate opens the instant the level reaches the threshold, and closes only once
+the level has stayed below it **continuously for 0.5 seconds**.  That dwell is
+what prevents chattering, and it rides over the gaps between syllables rather
+than clipping them.  It is used in place of a hysteresis band, which would have
+been the wrong tool here -- a signal parked just under the threshold would have
+held the gate open indefinitely instead of closing.
 
 For the gate to react quickly enough, the receiver's signal level travels **with
 the audio** rather than only on the two-second status stream: each relay frame is
@@ -758,6 +765,32 @@ A useful side effect: the channel being listened to gets a level roughly fifty
 times a second, so its meter tracks the signal live instead of stepping every two
 seconds.  Thresholds are stored per channel in `localStorage` and survive a
 reload.
+
+### When a call is audible but not decoded
+
+Set `SELCAL_DEBUG: "1"` (or `-selcal-debug`).  The launcher then logs every
+candidate pulse it saw, why any that were rejected failed, and how close each
+threshold came:
+
+```
+selcal[NAT-A]: pulse AB  0.68 s  margin 34.2 dB  offset +0.4 Hz  [no rejections]
+selcal[NAT-A]: did not pair AB with CD: gap of 1.10 s exceeds 0.90 s
+selcal[NAT-A]: pulse CD  0.66 s  margin 31.8 dB  offset +0.3 Hz
+               [the two tones differ in level by too much (7); worst imbalance 18.3 dB (limit 16)]
+```
+
+That distinguishes the failure modes quickly:
+
+| What the log shows | What it means |
+|---|---|
+| Two pulses logged, no code | The pairing rules rejected them — the reason is printed |
+| One pulse logged | The other pulse was rejected frame by frame; the counts say which threshold |
+| No pulses logged | Nothing cleared the per-frame tests at all — check the signal actually reached the passband |
+| `largest offset N Hz` near the limit | The station is off frequency; tone identification becomes ambiguous past half the minimum tone spacing |
+
+The worst-case figures (`worst imbalance`, `closest third peak`, `largest
+offset`) are printed alongside their limits, so the log says directly which
+constant to move.
 
 ### Testing against a real receiver
 

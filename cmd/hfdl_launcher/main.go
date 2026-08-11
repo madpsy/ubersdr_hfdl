@@ -66,7 +66,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintf(w, "  -selcal-audio      Relay channel audio to browser listeners (default: true)\n")                        //nolint:errcheck
 	fmt.Fprintf(w, "  -selcal-max-listeners  Max simultaneous listeners per channel (default: 10, 0 = unlimited)\n")         //nolint:errcheck
 	fmt.Fprintf(w, "  -selcal-record-dir     Directory for a WAV of each detection (recording off when unset)\n")            //nolint:errcheck
-	fmt.Fprintf(w, "  -selcal-record-seconds Audio window saved per detection (default: 8)\n\n")                             //nolint:errcheck
+	fmt.Fprintf(w, "  -selcal-record-seconds Audio window saved per detection (default: 8)\n")                               //nolint:errcheck
+	fmt.Fprintf(w, "  -selcal-debug          Log why candidate bursts were rejected (for diagnosing missed calls)\n\n")      //nolint:errcheck
 	fmt.Fprintf(w, "Extra dumphfdl arguments:\n")                                                                            //nolint:errcheck
 	fmt.Fprintf(w, "  Any arguments after -- are passed verbatim to every dumphfdl instance.\n")                             //nolint:errcheck
 	fmt.Fprintf(w, "  Note: --output decoded:json:file:path=- is always injected automatically.\n\n")                        //nolint:errcheck
@@ -159,7 +160,7 @@ func run(cfg config) error {
 			}
 		}
 		selcalMgr = newSelcalManager(cfg.selcalChannels, cfg.ubersdrURL, cfg.password, selcalSt,
-			cfg.selcalMaxListeners, cfg.selcalRecordDir, cfg.selcalRecordSecs)
+			cfg.selcalMaxListeners, cfg.selcalRecordDir, cfg.selcalRecordSecs, cfg.selcalDebug)
 		log.Printf("SELCAL enabled on %d channel(s) (audio relay: %v)",
 			len(cfg.selcalChannels), cfg.selcalAudio)
 		for _, c := range cfg.selcalChannels {
@@ -263,6 +264,7 @@ type config struct {
 	selcalMaxListeners int
 	selcalRecordDir    string
 	selcalRecordSecs   int
+	selcalDebug        bool
 }
 
 func main() {
@@ -286,6 +288,7 @@ func main() {
 		selcalMaxListeners = flag.Int("selcal-max-listeners", 10, "Maximum simultaneous listeners per channel (0 = unlimited)")
 		selcalRecordDir    = flag.String("selcal-record-dir", "", "Directory to write a WAV of each SELCAL detection (enables recording when set)")
 		selcalRecordSecs   = flag.Int("selcal-record-seconds", 8, "Length of the audio window saved per SELCAL detection")
+		selcalDebug        = flag.Bool("selcal-debug", false, "Log why candidate SELCAL bursts were rejected")
 	)
 	flag.Usage = func() { printUsage(os.Stderr) }
 	flag.Parse()
@@ -333,6 +336,7 @@ func main() {
 		selcalMaxListeners: *selcalMaxListeners,
 		selcalRecordDir:    *selcalRecordDir,
 		selcalRecordSecs:   *selcalRecordSecs,
+		selcalDebug:        *selcalDebug,
 	}); err != nil {
 		log.Fatalf("error: %v", err)
 	}

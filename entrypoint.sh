@@ -30,6 +30,8 @@
 #   SELCAL_RECORD_DIR   Directory to write a WAV of each SELCAL detection.
 #                       Recording is disabled when unset.
 #   SELCAL_RECORD_SECONDS  Audio window saved per detection (default: 8)
+#   SELCAL_DEBUG        Set to 1 to log why candidate SELCAL bursts were
+#                       rejected — use when a call was audible but not decoded
 #
 # Note: --output decoded:json:file:path=- is always injected automatically by
 # hfdl_launcher for the internal web statistics server.  Do not add it yourself.
@@ -56,6 +58,7 @@ args=""
 [ -n "$SELCAL_RECORD_DIR"      ] && args="$args -selcal-record-dir $SELCAL_RECORD_DIR"
 [ -n "$SELCAL_RECORD_SECONDS"  ] && args="$args -selcal-record-seconds $SELCAL_RECORD_SECONDS"
 [ "$SELCAL_AUDIO" = "0"        ] && args="$args -selcal-audio=false"
+[ "$SELCAL_DEBUG" = "1"        ] && args="$args -selcal-debug"
 
 # SELCAL_FREQS may contain spaces (channel labels such as "Shannon Volmet"),
 # so it is prepended to the positional parameters rather than to $args, which

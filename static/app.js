@@ -805,6 +805,7 @@ function evtRowClass(evt) {
     case 'logon':    return ' evt-row--logon';
     case 'logoff':   return ' evt-row--logoff';
     case 'gs_event': return ' evt-row--gs';
+    case 'selcal':   return ' evt-row--selcal';
     default:         return '';
   }
 }
@@ -814,6 +815,7 @@ function evtTypeLabel(evt) {
     case 'logon':    return '🟢 Logon';
     case 'logoff':   return '🔴 Logoff';
     case 'gs_event': return '⚠ GS Event';
+    case 'selcal':   return '🔊 SELCAL';
     default:         return esc(evt._evtType || 'Frame');
   }
 }
@@ -821,6 +823,11 @@ function evtTypeLabel(evt) {
 function evtActor(evt) {
   if (evt._evtType === 'gs_event') {
     return esc(evt.location || `GS ${evt.gs_id}`);
+  }
+  if (evt._evtType === 'selcal') {
+    // The code is the identity of the call; there is no aircraft ID in SELCAL.
+    return `<span class="selcal-code">${esc(evt.code)}</span>` +
+      (evt.selcal32 ? ' <span class="selcal-badge selcal-badge--32">SELCAL32</span>' : '');
   }
   // Use reg/flight/icao if available, then src_icao from slot map, then slot ID
   const parts = [esc(evt.reg), esc(evt.flight), evt.icao ? `(${esc(evt.icao)})` : ''].filter(Boolean);
@@ -831,6 +838,12 @@ function evtActor(evt) {
 
 function evtDetail(evt) {
   if (evt._evtType === 'gs_event') return esc(evt.change_note || '');
+  if (evt._evtType === 'selcal') {
+    const chans = (evt.channels || []).map(c => c.label || `${c.freq_khz} kHz`);
+    const where = chans.length > 1 ? `heard on ${chans.join(', ')}` : (chans[0] || '');
+    const snr = evt.has_snr ? `${evt.snr_db.toFixed(1)} dB` : '';
+    return esc([where, snr].filter(Boolean).join(' — '));
+  }
   if (evt._evtType === 'logon') {
     const id = evt.assigned_ac_id ? `Assigned ID ${evt.assigned_ac_id}` : '';
     return id || 'Logon confirmed';
@@ -848,6 +861,8 @@ function evtDetail(evt) {
 function evtGS(evt) {
   // For gs_event the actor IS the GS — no separate GS column needed
   if (evt._evtType === 'gs_event') return '—';
+  // SELCAL is only ever transmitted by the ground station.
+  if (evt._evtType === 'selcal') return 'Ground station';
   // For logon/logoff the destination is the ground station
   if (evt.dst_type === 'Ground station' && evt.dst_id) {
     return esc(gsNames[evt.dst_id] || `GS ${evt.dst_id}`);
@@ -870,7 +885,10 @@ function renderEventsTable() {
     return;
   }
   tbody.innerHTML = filtered.map(evt => {
-    const freq = evt.freq_khz ? evt.freq_khz.toLocaleString() : '—';
+    let freq = evt.freq_khz ? evt.freq_khz.toLocaleString() : '—';
+    if (evt._evtType === 'selcal' && Array.isArray(evt.channels)) {
+      freq = evt.channels.map(c => c.freq_khz).join(', ');
+    }
     return `<tr class="evt-row${evtRowClass(evt)}">
       <td class="mono dim">${fmtTime(evt.time)}</td>
       <td>${evtTypeLabel(evt)}</td>
@@ -1166,8 +1184,11 @@ function handleSSEEvent(raw) {
     handleGSEvent(data);
 
   } else if (type === 'selcal') {
-    // Decoded selective call from an HF voice channel — delegate to selcal.js
+    // Decoded selective call from an HF voice channel — delegate to selcal.js,
+    // and log it to the Events tab so it is recoverable from any tab rather
+    // than only visible if the toast happened to be seen.
     if (typeof addSelcalSpot === 'function') addSelcalSpot(data);
+    addEventEntry('selcal', data);
 
   } else if (type === 'selcal_signal') {
     // Live signal levels for every configured SELCAL channel

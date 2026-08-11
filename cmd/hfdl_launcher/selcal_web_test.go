@@ -19,7 +19,7 @@ func newTestSelcalServer(t *testing.T, audioEnabled bool, maxListeners int) (*ht
 	store := newSelcalStore(audioEnabled, func(string) {})
 	mgr := newSelcalManager(
 		[]selcalChannelCfg{{FreqKHz: 8906, Label: "NAT-A", Decode: true}},
-		"http://receiver.invalid:8080", "", store, maxListeners, "", 8)
+		"http://receiver.invalid:8080", "", store, maxListeners, "", 8, false)
 	mgr.channels[0].hub.setFormat(12000, 1)
 
 	mux := http.NewServeMux()

@@ -477,7 +477,7 @@ func TestSignalUnavailableSentinel(t *testing.T) {
 func TestChannelWSURL(t *testing.T) {
 	ch := newSelcalChannel(
 		selcalChannelCfg{FreqKHz: 8906, Label: "NAT-A", Decode: true},
-		"http://ubersdr:8080", "", nil, newListenerBudget(0), "", 8)
+		"http://ubersdr:8080", "", nil, newListenerBudget(0), "", 8, false)
 
 	u, err := url.Parse(ch.wsURL("sess-1"))
 	if err != nil {
@@ -579,7 +579,7 @@ func TestSpotSignalComesFromReceiverDuringBurst(t *testing.T) {
 	store := newSelcalStore(true, func(string) {})
 	ch := newSelcalChannel(
 		selcalChannelCfg{FreqKHz: 8906, Label: "NAT-A", Decode: true},
-		"http://receiver.invalid", "", store, newListenerBudget(0), "", 8)
+		"http://receiver.invalid", "", store, newListenerBudget(0), "", 8, false)
 
 	samples := synthBurst(t, [2]rune{'A', 'B'}, [2]rune{'C', 'D'}, 0, 0.3)
 
@@ -643,7 +643,7 @@ func TestSpotSignalAbsentWithoutReceiverData(t *testing.T) {
 	store := newSelcalStore(true, func(string) {})
 	ch := newSelcalChannel(
 		selcalChannelCfg{FreqKHz: 8906, Decode: true},
-		"http://receiver.invalid", "", store, newListenerBudget(0), "", 8)
+		"http://receiver.invalid", "", store, newListenerBudget(0), "", 8, false)
 
 	samples := synthBurst(t, [2]rune{'A', 'B'}, [2]rune{'C', 'D'}, 0, 0.3)
 	floats := make([]float64, 0, 240)

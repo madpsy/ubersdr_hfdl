@@ -82,7 +82,7 @@ func startTestChannel(t *testing.T, url string) (*selcalChannel, <-chan struct{}
 	store := newSelcalStore(true, func(string) {})
 	ch := newSelcalChannel(
 		selcalChannelCfg{FreqKHz: 8906, Label: "test", Decode: true},
-		url, "", store, newListenerBudget(0), "", 8)
+		url, "", store, newListenerBudget(0), "", 8, false)
 
 	exited := make(chan struct{})
 	go func() { ch.run(); close(exited) }()

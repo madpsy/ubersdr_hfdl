@@ -482,6 +482,7 @@ type selcalChannel struct {
 	hub        *audioHub
 	recordDir  string
 	recordSecs int
+	debug      bool
 
 	mu            sync.Mutex
 	connected     bool
@@ -547,7 +548,7 @@ func (c *selcalChannel) peakSNR(startSec, endSec float64) (float64, bool) {
 }
 
 func newSelcalChannel(cfg selcalChannelCfg, ubersdrURL, password string, store *selcalStore,
-	budget *listenerBudget, recordDir string, recordSecs int) *selcalChannel {
+	budget *listenerBudget, recordDir string, recordSecs int, debug bool) *selcalChannel {
 	return &selcalChannel{
 		cfg:        cfg,
 		ubersdrURL: ubersdrURL,
@@ -556,6 +557,7 @@ func newSelcalChannel(cfg selcalChannelCfg, ubersdrURL, password string, store *
 		hub:        newAudioHub(budget),
 		recordDir:  recordDir,
 		recordSecs: recordSecs,
+		debug:      debug,
 		stopCh:     make(chan struct{}),
 	}
 }
@@ -865,6 +867,10 @@ func (c *selcalChannel) handlePacket(pkt *pcmPacket, floats *[]float64) {
 
 	if c.det == nil || c.det.rate != pkt.Rate {
 		c.det = newSelcalDetector(pkt.Rate)
+		if c.debug {
+			name := c.cfg.Name()
+			c.det.onEvent = func(msg string) { log.Printf("selcal[%s]: %s", name, msg) }
+		}
 		log.Printf("selcal[%s]: detector ready (%d Hz, %d-point FFT, %.2f Hz bins)",
 			c.cfg.Name(), pkt.Rate, c.det.n, c.det.binHz)
 		if c.recordDir != "" {
@@ -935,13 +941,13 @@ type selcalManager struct {
 }
 
 func newSelcalManager(cfgs []selcalChannelCfg, ubersdrURL, password string, store *selcalStore,
-	maxListeners int, recordDir string, recordSecs int) *selcalManager {
+	maxListeners int, recordDir string, recordSecs int, debug bool) *selcalManager {
 	// One budget shared by every channel — see listenerBudget.
 	budget := newListenerBudget(maxListeners)
 	m := &selcalManager{store: store, budget: budget, stopCh: make(chan struct{})}
 	for _, cfg := range cfgs {
 		m.channels = append(m.channels,
-			newSelcalChannel(cfg, ubersdrURL, password, store, budget, recordDir, recordSecs))
+			newSelcalChannel(cfg, ubersdrURL, password, store, budget, recordDir, recordSecs, debug))
 	}
 	return m
 }

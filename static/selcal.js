@@ -31,13 +31,13 @@ const SELCAL_SNR_STRONG = 50; // green above this
 // position can be read directly against the channel's signal bar. The bottom of
 // the range is "off" rather than a 30 dB gate, since an idle channel already
 // sits at 30–35 dB and a gate there would never close anyway.
-const SELCAL_SQUELCH_OFF        = SELCAL_SNR_MIN;
-const SELCAL_SQUELCH_HYSTERESIS = 2.0;  // dB below the threshold before closing
-const SELCAL_SQUELCH_HANG       = 0.4;  // seconds held open after the signal drops
-const SELCAL_SQUELCH_RAMP       = 0.015; // gain ramp, long enough to avoid clicks
-const SELCAL_AUTO_WINDOW        = 2.0;  // seconds of history the Auto button averages
-const SELCAL_SNR_HISTORY        = 8.0;  // seconds of per-channel history retained
-const SELCAL_SQUELCH_STORE      = 'selcalSquelch';
+const SELCAL_SQUELCH_OFF   = SELCAL_SNR_MIN;
+const SELCAL_SQUELCH_DWELL = 0.5;   // seconds continuously below the threshold before muting
+const SELCAL_SQUELCH_RAMP  = 0.015; // gain ramp, long enough to avoid clicks
+const SELCAL_AUTO_WINDOW   = 3.0;   // seconds of history the Auto button averages
+const SELCAL_AUTO_MARGIN   = 3;     // dB Auto sets above that average
+const SELCAL_SNR_HISTORY   = 10.0;  // seconds of per-channel history retained
+const SELCAL_SQUELCH_STORE = 'selcalSquelch';
 
 // Per-channel squelch thresholds, persisted so they survive a page reload.
 let selcalSquelch = {};
@@ -122,7 +122,7 @@ let selcalListeningId = null;
 
 // Squelch gate state for the channel currently playing.
 let selcalGateOpen = true;
-let selcalGateHangUntil = 0; // audio-context time
+let selcalGateBelowSince = null; // audio-context time the level first fell below the threshold
 let selcalLastMeterPaint = 0;
 
 // The signal level arrives in a two-byte header on each audio frame; the
@@ -169,7 +169,7 @@ function selcalStartAudio(id) {
   selcalSquelchGain.gain.value = 1;
   selcalSquelchGain.connect(selcalGain);
   selcalGateOpen = true;
-  selcalGateHangUntil = 0;
+  selcalGateBelowSince = null;
   // Browsers start the context suspended until a user gesture; this call is
   // made from the click handler, so resuming here is permitted.
   if (selcalCtx.state === 'suspended') selcalCtx.resume();
@@ -254,9 +254,12 @@ function selcalPlayFrame(view) {
 // schedules the gain change at the instant the packet will actually be heard,
 // rather than when it arrived.
 //
-// Hysteresis plus a hang timer keep it from chattering when the signal sits near
-// the threshold — which matters because Auto deliberately parks the threshold at
-// the recent average, i.e. right in the middle of the noise.
+// The gate opens the instant the level reaches the threshold, but only closes
+// once the level has stayed below it continuously for SELCAL_SQUELCH_DWELL.
+// That dwell is what stops it chattering, and it also rides over the gaps
+// between syllables rather than clipping them.  It replaces a hysteresis band,
+// which would have been the wrong tool here: a signal parked just under the
+// threshold would have held the gate open indefinitely instead of closing.
 function selcalApplySquelch(snr, startAt, duration) {
   const threshold = selcalSquelchFor(selcalListeningId);
   let open;
@@ -264,14 +267,13 @@ function selcalApplySquelch(snr, startAt, duration) {
   if (threshold <= SELCAL_SQUELCH_OFF || snr === null) {
     // Squelch off, or no measurement to judge by: never mute silently.
     open = true;
-    selcalGateHangUntil = 0;
+    selcalGateBelowSince = null;
   } else if (snr >= threshold) {
     open = true;
-    selcalGateHangUntil = startAt + duration + SELCAL_SQUELCH_HANG;
-  } else if (snr < threshold - SELCAL_SQUELCH_HYSTERESIS) {
-    open = startAt < selcalGateHangUntil;
+    selcalGateBelowSince = null;
   } else {
-    open = selcalGateOpen; // inside the hysteresis band — hold
+    if (selcalGateBelowSince === null) selcalGateBelowSince = startAt;
+    open = (startAt - selcalGateBelowSince) < SELCAL_SQUELCH_DWELL;
   }
 
   if (open !== selcalGateOpen) {
@@ -435,7 +437,7 @@ function buildSelcalChannelRows(tbody) {
                   title="Mute this channel below this signal level" />
            <span class="selcal-sq-val" data-role="sq-val"></span>
            <button class="selcal-sq-auto" data-ch="${id}"
-                   title="Set the threshold to this channel's average level over the last ${SELCAL_AUTO_WINDOW} s">Auto</button>
+                   title="Set the threshold to ${SELCAL_AUTO_MARGIN} dB above this channel's average level over the last ${SELCAL_AUTO_WINDOW} s">Auto</button>
            <span class="selcal-sq-state" data-role="sq-state"></span>
          </span>`
       : '<span class="selcal-sig-none">—</span>';
@@ -466,10 +468,9 @@ function buildSelcalChannelRows(tbody) {
   });
 }
 
-// selcalAutoSquelch parks the threshold at the channel's average level over the
-// last couple of seconds — i.e. at the current noise floor, so anything above
-// ambient opens the gate.  Hysteresis and the hang timer stop it chattering
-// there.
+// selcalAutoSquelch sets the threshold a little above the channel's recent
+// average — the average being the ambient noise floor, so the margin puts the
+// gate just clear of it and anything louder than ambient opens it.
 function selcalAutoSquelch(id) {
   let avg = selcalAverageSNR(id, SELCAL_AUTO_WINDOW);
   if (avg === null) {
@@ -480,7 +481,8 @@ function selcalAutoSquelch(id) {
     if (typeof showToast === 'function') showToast('No signal history yet for that channel', 6000);
     return;
   }
-  const v = Math.max(SELCAL_SNR_MIN, Math.min(SELCAL_SNR_MAX, Math.round(avg)));
+  const v = Math.max(SELCAL_SNR_MIN,
+                     Math.min(SELCAL_SNR_MAX, Math.round(avg + SELCAL_AUTO_MARGIN)));
   selcalSetSquelch(id, v);
 
   const slider = document.querySelector(`.selcal-sq-slider[data-ch="${CSS.escape(id)}"]`);

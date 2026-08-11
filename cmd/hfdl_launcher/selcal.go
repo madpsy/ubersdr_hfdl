@@ -32,11 +32,11 @@ package main
 //  2. Find spectral peaks in the SELCAL band, refined to sub-bin accuracy by
 //     parabolic interpolation on the log magnitude.
 //  3. Require exactly two dominant peaks: both well above the in-band noise
-//     floor, within 8 dB of each other, and at least 8 dB above the third
-//     strongest peak.  Voice cannot satisfy this for a full second, and the
-//     third-peak margin is the main defence against harmonics and f2±f1
-//     intermodulation products, which the permitted 15% audio distortion can
-//     put close to real tone frequencies.
+//     floor, comparable in level, and clearly above the third strongest peak.
+//     Voice cannot satisfy this for a full second, and the third-peak margin is
+//     the main defence against harmonics and f2±f1 intermodulation products,
+//     which the permitted 15% audio distortion can put close to real tone
+//     frequencies.
 //  4. Map each peak to the nearest tabulated tone, requiring both to share the
 //     same small frequency offset (a receiver or transmitter frequency error
 //     shifts every tone by the same number of Hz, so a consistent offset is
@@ -242,8 +242,8 @@ func (p *fftPlan) transform(buf []complex128) {
 // from above — enough to stop unrelated bursts pairing with one another.
 const (
 	selcalPeakOverNoiseDB = 10.0 // weaker tone must clear the in-band noise floor by this
-	selcalPairBalanceDB   = 8.0  // permitted level difference between the two tones
-	selcalThirdPeakDB     = 8.0  // margin the pair must hold over any third peak
+	selcalPairBalanceDB   = 16.0 // permitted level difference between the two tones
+	selcalThirdPeakDB     = 6.0  // margin the pair must hold over any third peak
 	selcalMaxOffsetHz     = 6.0  // largest tolerated common frequency error (< selcalMinToneGapHz/2)
 	selcalPairOffsetHz    = 4.0  // permitted offset disagreement between the two tones of a pulse
 	selcalCodeOffsetHz    = 5.0  // permitted offset disagreement across all four tones
@@ -255,6 +255,82 @@ const (
 	selcalMinSpanSec = 1.20 // shortest accepted pulse 1 start → pulse 2 end
 	selcalMaxSpanSec = 3.50 // longest accepted pulse 1 start → pulse 2 end
 )
+
+// Reasons a frame or a run can be rejected.  Recorded so that a call which was
+// plainly audible but not decoded can be explained, rather than just vanishing.
+const (
+	rejNone       = ""
+	rejFewPeaks   = "fewer than two peaks in the SELCAL band"
+	rejWeak       = "weaker tone too close to the noise floor"
+	rejUnbalanced = "the two tones differ in level by too much"
+	rejThirdPeak  = "a third peak too close to the pair"
+	rejOffGrid    = "a peak did not land on a SELCAL tone"
+	rejSameTone   = "both peaks mapped to the same tone"
+	rejOffsetPair = "the two tones disagree on frequency offset"
+)
+
+// selcalDiag accumulates why frames were rejected, so a near miss can be
+// explained.  Counts are since the last report.
+type selcalDiag struct {
+	frames  int
+	reasons map[string]int
+	// worst-case values seen while at least two peaks were present, which is
+	// what tells you which threshold to move.
+	maxImbalanceDB float64
+	minThirdDB     float64
+	maxOffsetHz    float64
+}
+
+func newSelcalDiag() *selcalDiag {
+	return &selcalDiag{reasons: map[string]int{}, minThirdDB: math.MaxFloat64}
+}
+
+func (d *selcalDiag) note(reason string) {
+	d.frames++
+	if reason != rejNone {
+		d.reasons[reason]++
+	}
+}
+
+// summary renders the accumulated reasons, commonest first.
+func (d *selcalDiag) summary() string {
+	if len(d.reasons) == 0 {
+		return "no rejections"
+	}
+	type kv struct {
+		k string
+		n int
+	}
+	var all []kv
+	for k, n := range d.reasons {
+		all = append(all, kv{k, n})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].n > all[j].n })
+
+	parts := make([]string, 0, len(all))
+	for _, e := range all {
+		parts = append(parts, fmt.Sprintf("%s (%d)", e.k, e.n))
+	}
+	out := strings.Join(parts, ", ")
+	if d.maxImbalanceDB > 0 {
+		out += fmt.Sprintf("; worst imbalance %.1f dB (limit %.0f)", d.maxImbalanceDB, selcalPairBalanceDB)
+	}
+	if d.minThirdDB != math.MaxFloat64 {
+		out += fmt.Sprintf("; closest third peak %.1f dB (limit %.0f)", d.minThirdDB, selcalThirdPeakDB)
+	}
+	if d.maxOffsetHz > 0 {
+		out += fmt.Sprintf("; largest offset %.1f Hz (limit %.0f)", d.maxOffsetHz, selcalMaxOffsetHz)
+	}
+	return out
+}
+
+func (d *selcalDiag) reset() {
+	d.frames = 0
+	d.reasons = map[string]int{}
+	d.maxImbalanceDB = 0
+	d.minThirdDB = math.MaxFloat64
+	d.maxOffsetHz = 0
+}
 
 // toneRun is a maximal sequence of consecutive frames that all resolved to the
 // same tone pair — in other words, one detected pulse.
@@ -309,6 +385,11 @@ type selcalDetector struct {
 	cur  *toneRun
 	prev *toneRun
 
+	// Diagnostics.  diag accumulates frame rejection reasons; onEvent, when set,
+	// receives human-readable notes about runs that did not become a code.
+	diag    *selcalDiag
+	onEvent func(string)
+
 	// lastLevelDB and lastNoiseDB expose the most recent frame's in-band peak
 	// and noise-floor levels for the UI signal meter.
 	lastLevelDB float64
@@ -347,6 +428,7 @@ func newSelcalDetector(rate int) *selcalDetector {
 	d.mags = make([]float64, d.hiBin-d.loBin+1)
 	d.sorted = make([]float64, len(d.mags))
 	d.buf = make([]float64, 0, n+d.hop)
+	d.diag = newSelcalDiag()
 	return d
 }
 
@@ -398,8 +480,9 @@ func (d *selcalDetector) processFrame(frame []float64, frameSec float64) *selcal
 	d.lastNoiseDB = noiseDB
 	d.lastLevelDB = ampDB(d.sorted[len(d.sorted)-1])
 
-	pair, offset, snr, ok := d.resolvePair(noiseDB)
-	if !ok {
+	pair, offset, snr, reason := d.resolvePair(noiseDB)
+	d.diag.note(reason)
+	if reason != rejNone {
 		// This is the usual way a burst completes: the second pulse ends and
 		// the next frame resolves nothing, so closing the run here is what
 		// yields the code.
@@ -434,7 +517,7 @@ func (d *selcalDetector) processFrame(frame []float64, frameSec float64) *selcal
 // resolvePair extracts the dominant tone pair from the current magnitude
 // spectrum, or reports ok=false when the frame does not look like a SELCAL
 // pulse.  The returned pair is sorted into designator order.
-func (d *selcalDetector) resolvePair(noiseDB float64) (pair [2]int, offsetHz, snrDB float64, ok bool) {
+func (d *selcalDetector) resolvePair(noiseDB float64) (pair [2]int, offsetHz, snrDB float64, reason string) {
 	type peak struct {
 		hz float64
 		db float64
@@ -462,34 +545,78 @@ func (d *selcalDetector) resolvePair(noiseDB float64) (pair [2]int, offsetHz, sn
 		})
 	}
 	if len(peaks) < 2 {
-		return pair, 0, 0, false
+		return pair, 0, 0, rejFewPeaks
 	}
 	sort.Slice(peaks, func(a, b int) bool { return peaks[a].db > peaks[b].db })
 
 	p1, p2 := peaks[0], peaks[1]
 	if p2.db-noiseDB < selcalPeakOverNoiseDB {
-		return pair, 0, 0, false
+		return pair, 0, 0, rejWeak
 	}
+
+	// From here the frame plausibly contains a tone pair, so record how close
+	// each threshold came to rejecting it.
+	if imb := p1.db - p2.db; imb > d.diag.maxImbalanceDB {
+		d.diag.maxImbalanceDB = imb
+	}
+	if len(peaks) >= 3 {
+		if third := p2.db - peaks[2].db; third < d.diag.minThirdDB {
+			d.diag.minThirdDB = third
+		}
+	}
+
 	if p1.db-p2.db > selcalPairBalanceDB {
-		return pair, 0, 0, false
+		return pair, 0, 0, rejUnbalanced
 	}
 	if len(peaks) >= 3 && p2.db-peaks[2].db < selcalThirdPeakDB {
-		return pair, 0, 0, false
+		return pair, 0, 0, rejThirdPeak
 	}
 
 	i1, off1, ok1 := nearestTone(p1.hz)
 	i2, off2, ok2 := nearestTone(p2.hz)
-	if !ok1 || !ok2 || i1 == i2 {
-		return pair, 0, 0, false
+	if !ok1 || !ok2 {
+		// Record how far off the grid the peak fell, which is what shows a
+		// station sitting off frequency.
+		for _, p := range []peak{p1, p2} {
+			if _, off, ok := nearestToneUnbounded(p.hz); !ok {
+				_ = off
+			} else if a := math.Abs(off); a > d.diag.maxOffsetHz {
+				d.diag.maxOffsetHz = a
+			}
+		}
+		return pair, 0, 0, rejOffGrid
+	}
+	if i1 == i2 {
+		return pair, 0, 0, rejSameTone
+	}
+	for _, off := range []float64{off1, off2} {
+		if a := math.Abs(off); a > d.diag.maxOffsetHz {
+			d.diag.maxOffsetHz = a
+		}
 	}
 	if math.Abs(off1-off2) > selcalPairOffsetHz {
-		return pair, 0, 0, false
+		return pair, 0, 0, rejOffsetPair
 	}
 
 	if i1 > i2 {
 		i1, i2 = i2, i1
 	}
-	return [2]int{i1, i2}, (off1 + off2) / 2, p2.db - noiseDB, true
+	return [2]int{i1, i2}, (off1 + off2) / 2, p2.db - noiseDB, rejNone
+}
+
+// nearestToneUnbounded is nearestTone without the offset limit, used only to
+// report how far a peak sat from the nearest tone.
+func nearestToneUnbounded(hz float64) (idx int, offsetHz float64, ok bool) {
+	best, bestErr := -1, math.MaxFloat64
+	for i, t := range selcalToneTable {
+		if e := math.Abs(hz - t.Hz); e < bestErr {
+			best, bestErr = i, e
+		}
+	}
+	if best < 0 {
+		return 0, 0, false
+	}
+	return best, hz - selcalToneTable[best].Hz, true
 }
 
 // closeRun retires the in-progress run.  If it is long enough to be a real
@@ -503,14 +630,26 @@ func (d *selcalDetector) closeRun(nowSec float64) *selcalDetection {
 	}
 	dur := run.endSec - run.startSec
 	if run.frames < selcalMinFrames || dur < selcalMinRunSec || dur > selcalMaxRunSec {
-		return nil // too brief, or too sustained, to be a one-second pulse
+		if run.frames >= 2 {
+			d.report(fmt.Sprintf("discarded a %s pulse lasting %.2f s (%d frames): %s",
+				runTones(run), dur, run.frames, runLenReason(run, dur)))
+		}
+		return nil
 	}
+
+	d.report(fmt.Sprintf("pulse %s  %.2f s  margin %.1f dB  offset %+.1f Hz  [%s]",
+		runTones(run), dur, run.snrDB, run.offsetHz, d.diag.summary()))
+	d.diag.reset()
 
 	if d.prev != nil {
 		gap := run.startSec - d.prev.endSec
 		span := run.endSec - d.prev.startSec + d.windowSec()
-		if gap <= selcalMaxGapSec && span >= selcalMinSpanSec && span <= selcalMaxSpanSec &&
-			math.Abs(d.prev.offsetHz-run.offsetHz) <= selcalCodeOffsetHz {
+		why := pairFailure(d.prev, run, gap, span)
+		if why != "" {
+			d.report(fmt.Sprintf("did not pair %s with %s: %s",
+				runTones(d.prev), runTones(run), why))
+		}
+		if why == "" {
 			if code := selcalCode(d.prev.pair, run.pair); code != "" {
 				det := &selcalDetection{
 					Code:     code,
@@ -531,6 +670,54 @@ func (d *selcalDetector) closeRun(nowSec float64) *selcalDetection {
 
 	d.prev = run
 	return nil
+}
+
+// runTones renders a run's tone pair, e.g. "AB".
+func runTones(r *toneRun) string {
+	a, b := r.pair[0], r.pair[1]
+	if a > b {
+		a, b = b, a
+	}
+	return fmt.Sprintf("%c%c", selcalToneTable[a].Char, selcalToneTable[b].Char)
+}
+
+// runLenReason explains why a run was too short or too long to be a pulse.
+func runLenReason(run *toneRun, dur float64) string {
+	switch {
+	case run.frames < selcalMinFrames:
+		return fmt.Sprintf("needs at least %d frames — the tones probably broke up mid-pulse",
+			selcalMinFrames)
+	case dur < selcalMinRunSec:
+		return fmt.Sprintf("shorter than %.2f s", selcalMinRunSec)
+	default:
+		return fmt.Sprintf("longer than %.2f s, so not a SELCAL pulse", selcalMaxRunSec)
+	}
+}
+
+// pairFailure explains why two pulses were not accepted as one code, or returns
+// "" if they were.
+func pairFailure(prev, run *toneRun, gap, span float64) string {
+	switch {
+	case gap > selcalMaxGapSec:
+		return fmt.Sprintf("gap of %.2f s exceeds %.2f s", gap, selcalMaxGapSec)
+	case span < selcalMinSpanSec:
+		return fmt.Sprintf("total span %.2f s is under %.2f s", span, selcalMinSpanSec)
+	case span > selcalMaxSpanSec:
+		return fmt.Sprintf("total span %.2f s exceeds %.2f s", span, selcalMaxSpanSec)
+	case math.Abs(prev.offsetHz-run.offsetHz) > selcalCodeOffsetHz:
+		return fmt.Sprintf("the pulses disagree on frequency offset by %.1f Hz (limit %.0f)",
+			math.Abs(prev.offsetHz-run.offsetHz), selcalCodeOffsetHz)
+	case selcalCode(prev.pair, run.pair) == "":
+		return "a tone repeats between the two pulses, which no SELCAL code does"
+	}
+	return ""
+}
+
+// report forwards a diagnostic note when debugging is enabled.
+func (d *selcalDetector) report(msg string) {
+	if d.onEvent != nil {
+		d.onEvent(msg)
+	}
 }
 
 // expire discards a pending first pulse once no second pulse can still follow

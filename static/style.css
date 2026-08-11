@@ -3557,3 +3557,5 @@ td.empty {
 
 .selcal-sq-state--open   { color: var(--green); }
 .selcal-sq-state--closed { color: var(--muted); }
+
+.evt-row--selcal { background: rgba(88, 166, 255, 0.08); }

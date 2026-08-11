@@ -42,7 +42,7 @@ func TestLiveReceiver(t *testing.T) {
 	}
 
 	store := newSelcalStore(true, func(msg string) { t.Logf("SSE: %s", msg) })
-	mgr := newSelcalManager(cfgs, baseURL, os.Getenv("SELCAL_LIVE_PASS"), store, 10, "", 8)
+	mgr := newSelcalManager(cfgs, baseURL, os.Getenv("SELCAL_LIVE_PASS"), store, 10, "", 8, os.Getenv("SELCAL_LIVE_DEBUG") != "")
 	mgr.start()
 	defer mgr.stop()
 

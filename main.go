@@ -40,7 +40,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -382,25 +381,6 @@ func (c *client) runOnce() (reconnect bool) {
 		}
 	}()
 
-	// Throughput stats goroutine — logs bytes/packets written to stdout every 30 s.
-	var totalBytes atomic.Int64
-	var totalPackets atomic.Int64
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				b := totalBytes.Swap(0)
-				p := totalPackets.Swap(0)
-				fmt.Fprintf(os.Stderr, "throughput [%d Hz / %s]: %d packets, %.1f KB/s (%.2f MB in 30s)\n",
-					c.frequency, c.iqMode, p, float64(b)/30/1024, float64(b)/1024/1024)
-			}
-		}
-	}()
-
 	firstPacket := true
 
 	for c.running {
@@ -429,13 +409,10 @@ func (c *client) runOnce() (reconnect bool) {
 				firstPacket = false
 			}
 			// Write raw CS16 to stdout
-			n, err := os.Stdout.Write(pcm)
-			if err != nil {
+			if _, err := os.Stdout.Write(pcm); err != nil {
 				fmt.Fprintf(os.Stderr, "stdout write error: %v\n", err)
 				return false
 			}
-			totalBytes.Add(int64(n))
-			totalPackets.Add(1)
 
 		case websocket.TextMessage:
 			var m wsMessage
@@ -444,9 +421,9 @@ func (c *client) runOnce() (reconnect bool) {
 				continue
 			}
 			switch m.Type {
-				case "error":
-					fmt.Fprintf(os.Stderr, "server error: %s\n", m.Error)
-					return c.autoReconnect
+			case "error":
+				fmt.Fprintf(os.Stderr, "server error: %s\n", m.Error)
+				return c.autoReconnect
 			case "status":
 				fmt.Fprintf(os.Stderr, "status: session=%s freq=%d mode=%s\n",
 					m.SessionID, m.Frequency, m.Mode)
