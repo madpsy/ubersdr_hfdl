@@ -312,6 +312,42 @@ func linearToULaw(sample int16) byte {
 	return (byte(seg<<4) | byte((v>>uint(seg+1))&0x0F)) ^ mask
 }
 
+// Relay frame layout: a two-byte little-endian signed header carrying the
+// receiver's signal-to-noise measurement for this packet in hundredths of a dB,
+// followed by one µ-law byte per sample.
+//
+// The level travels with the audio rather than only on the two-second status
+// stream so that a listener-side squelch can react within a packet (~20 ms).
+// Gating on a status feed that slow would clip the opening of every
+// transmission.  Two bytes per packet is under 1% overhead.
+const (
+	audioFrameHeaderLen = 2
+	audioSNRUnavailable = math.MinInt16 // receiver supplied no measurement
+	audioSNRScale       = 100.0         // centi-dB per dB
+)
+
+// encodeAudioFrame builds one relay frame from a decoded packet.
+func encodeAudioFrame(pkt *pcmPacket) []byte {
+	snr := int64(audioSNRUnavailable)
+	if pkt.HasSignal {
+		v := math.Round((pkt.BasebandPowerDB - pkt.NoiseDensityDB) * audioSNRScale)
+		// Clamp rather than let an absurd reading wrap into a plausible one.
+		if v > math.MaxInt16 {
+			v = math.MaxInt16
+		} else if v <= audioSNRUnavailable {
+			v = audioSNRUnavailable + 1
+		}
+		snr = int64(v)
+	}
+
+	frame := make([]byte, audioFrameHeaderLen+len(pkt.Samples))
+	binary.LittleEndian.PutUint16(frame[0:2], uint16(int16(snr)))
+	for i, s := range pkt.Samples {
+		frame[audioFrameHeaderLen+i] = linearToULaw(s)
+	}
+	return frame
+}
+
 // broadcast delivers one encoded frame to every listener, skipping any whose
 // buffer has backed up.
 func (h *audioHub) broadcast(pcm []byte) {
@@ -807,11 +843,7 @@ func (c *selcalChannel) handlePacket(pkt *pcmPacket, floats *[]float64) {
 	// Relay first so listener latency does not depend on decode work.
 	c.hub.setFormat(pkt.Rate, pkt.Channels)
 	if c.hub.listeners() > 0 {
-		encoded := make([]byte, len(pkt.Samples))
-		for i, s := range pkt.Samples {
-			encoded[i] = linearToULaw(s)
-		}
-		c.hub.broadcast(encoded)
+		c.hub.broadcast(encodeAudioFrame(pkt))
 	}
 
 	c.mu.Lock()

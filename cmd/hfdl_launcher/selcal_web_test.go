@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -99,6 +100,7 @@ func TestSelcalAudioStreamsULaw(t *testing.T) {
 	var hello struct {
 		Type    string  `json:"type"`
 		Codec   string  `json:"codec"`
+		Framing string  `json:"framing"`
 		Rate    int     `json:"rate"`
 		Chans   int     `json:"channels"`
 		FreqKHz float64 `json:"freq_khz"`
@@ -106,8 +108,8 @@ func TestSelcalAudioStreamsULaw(t *testing.T) {
 	if err := json.Unmarshal(msg, &hello); err != nil {
 		t.Fatalf("hello: %v", err)
 	}
-	if hello.Type != "format" || hello.Codec != "ulaw" || hello.Rate != 12000 ||
-		hello.Chans != 1 || hello.FreqKHz != 8906 {
+	if hello.Type != "format" || hello.Codec != "ulaw" || hello.Framing != "snr16le+ulaw" ||
+		hello.Rate != 12000 || hello.Chans != 1 || hello.FreqKHz != 8906 {
 		t.Fatalf("unexpected hello: %+v", hello)
 	}
 
@@ -118,7 +120,10 @@ func TestSelcalAudioStreamsULaw(t *testing.T) {
 	}
 
 	samples := []int16{0, 1000, -1000, 32767, -32768}
-	mgr.channels[0].handlePacket(&pcmPacket{Samples: samples, Rate: 12000, Channels: 1}, new([]float64))
+	mgr.channels[0].handlePacket(&pcmPacket{
+		Samples: samples, Rate: 12000, Channels: 1,
+		BasebandPowerDB: -100, NoiseDensityDB: -142.5, HasSignal: true, // 42.5 dB
+	}, new([]float64))
 
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
@@ -130,14 +135,32 @@ func TestSelcalAudioStreamsULaw(t *testing.T) {
 	if mt != websocket.BinaryMessage {
 		t.Fatalf("audio message type = %d, want binary", mt)
 	}
-	// One µ-law byte per sample — half the size of the 16-bit source.
-	if len(audio) != len(samples) {
-		t.Fatalf("got %d bytes for %d samples, want one byte each", len(audio), len(samples))
+	// Two-byte SNR header, then one µ-law byte per sample.
+	if len(audio) != audioFrameHeaderLen+len(samples) {
+		t.Fatalf("got %d bytes for %d samples, want a 2-byte header plus one byte each",
+			len(audio), len(samples))
+	}
+	// The header carries the receiver's level so a listener-side squelch can
+	// react per packet rather than waiting on the 2 s status stream.
+	if snr := int16(binary.LittleEndian.Uint16(audio[0:2])); snr != 4250 {
+		t.Errorf("SNR header = %d centi-dB, want 4250 (42.5 dB)", snr)
 	}
 	for i, s := range samples {
-		if audio[i] != linearToULaw(s) {
-			t.Errorf("byte %d = %#x, want %#x", i, audio[i], linearToULaw(s))
+		if audio[audioFrameHeaderLen+i] != linearToULaw(s) {
+			t.Errorf("byte %d = %#x, want %#x", i, audio[audioFrameHeaderLen+i], linearToULaw(s))
 		}
+	}
+}
+
+func TestAudioFrameSNRUnavailable(t *testing.T) {
+	// With no receiver measurement the header must be an unambiguous sentinel,
+	// not a plausible-looking 0 dB.
+	frame := encodeAudioFrame(&pcmPacket{Samples: []int16{1, 2, 3}, Rate: 12000, Channels: 1})
+	if snr := int16(binary.LittleEndian.Uint16(frame[0:2])); snr != audioSNRUnavailable {
+		t.Errorf("SNR header = %d, want the unavailable sentinel %d", snr, audioSNRUnavailable)
+	}
+	if len(frame) != audioFrameHeaderLen+3 {
+		t.Errorf("frame length %d, want %d", len(frame), audioFrameHeaderLen+3)
 	}
 }
 

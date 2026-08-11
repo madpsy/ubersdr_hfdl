@@ -3514,3 +3514,46 @@ td.empty {
 .selcal-snr--weak   { color: var(--red); }
 .selcal-snr--ok     { color: var(--yellow); }
 .selcal-snr--strong { color: var(--green); }
+
+/* ---- SELCAL squelch ---- */
+
+.selcal-sq {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.selcal-sq-slider {
+  width: 84px;
+  accent-color: var(--accent);
+}
+
+.selcal-sq-val {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  min-width: 38px;
+}
+
+.selcal-sq-auto {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.selcal-sq-auto:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.selcal-sq-state {
+  font-size: 11px;
+  min-width: 10px;
+}
+
+.selcal-sq-state--open   { color: var(--green); }
+.selcal-sq-state--closed { color: var(--muted); }

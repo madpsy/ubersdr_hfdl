@@ -102,6 +102,7 @@ func registerSelcalRoutes(mux *http.ServeMux, mgr *selcalManager, store *selcalS
 		hello, _ := json.Marshal(map[string]any{
 			"type":     "format",
 			"codec":    "ulaw",
+			"framing":  "snr16le+ulaw", // int16 centi-dB SNR header, then µ-law samples
 			"rate":     rate,
 			"channels": chans,
 			"freq_khz": ch.cfg.FreqKHz,

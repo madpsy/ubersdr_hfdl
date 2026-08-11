@@ -729,6 +729,36 @@ shows the margin as a tooltip.  When the receiver supplies no measurement
 (protocol version 1, or an older server) `has_snr` is false and only the margin
 is available.
 
+### Squelch
+
+Each channel has its own squelch threshold, set with a slider on the same 30-60
+dB scale as the signal meters, so a slider position can be read directly against
+that channel's signal bar.  It is a listener-side gate: it mutes what you hear
+and never affects decoding, which continues on every channel regardless.
+
+The bottom of the range is "Off" rather than a 30 dB gate, since an idle channel
+already sits at 30-35 dB and a gate there would never close.
+
+**Auto** parks the threshold at that channel's average level over the last two
+seconds -- in other words at the current noise floor, so anything above ambient
+opens the gate.  A 2 dB hysteresis band and a 0.4 s hang timer stop it chattering
+when the signal sits near the threshold, which matters precisely because Auto
+puts it there deliberately.
+
+For the gate to react quickly enough, the receiver's signal level travels **with
+the audio** rather than only on the two-second status stream: each relay frame is
+a two-byte little-endian signed header carrying the level in hundredths of a dB,
+followed by the u-law samples.  That is under 1% overhead and lets the gate
+respond within one packet (~20 ms); gating on the status feed instead would clip
+the opening of every transmission.  A sentinel marks packets for which the
+receiver supplied no measurement, and the gate fails **open** on those rather
+than muting silently.
+
+A useful side effect: the channel being listened to gets a level roughly fifty
+times a second, so its meter tracks the signal live instead of stepping every two
+seconds.  Thresholds are stored per channel in `localStorage` and survive a
+reload.
+
 ### Testing against a real receiver
 
 ```bash

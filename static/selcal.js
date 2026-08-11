@@ -10,7 +10,8 @@
 
    Data sources:
      GET /selcal                 channel status + spot history (polled)
-     GET /selcal/audio?ch=ID     WebSocket, mono signed 16-bit LE PCM
+     GET /selcal/audio?ch=ID     WebSocket: per packet, an int16 LE signal
+                                 level in centi-dB followed by mono u-law audio
      /events SSE "selcal"        newly decoded calls, pushed
    ----------------------------------------------------------------------- */
 
@@ -25,6 +26,60 @@ const SELCAL_SNR_MIN    = 30; // bar empty at or below
 const SELCAL_SNR_MAX    = 60; // bar full at or above
 const SELCAL_SNR_OK     = 40; // amber above this
 const SELCAL_SNR_STRONG = 50; // green above this
+
+// Squelch. The threshold is per channel and shares the meter scale, so a slider
+// position can be read directly against the channel's signal bar. The bottom of
+// the range is "off" rather than a 30 dB gate, since an idle channel already
+// sits at 30–35 dB and a gate there would never close anyway.
+const SELCAL_SQUELCH_OFF        = SELCAL_SNR_MIN;
+const SELCAL_SQUELCH_HYSTERESIS = 2.0;  // dB below the threshold before closing
+const SELCAL_SQUELCH_HANG       = 0.4;  // seconds held open after the signal drops
+const SELCAL_SQUELCH_RAMP       = 0.015; // gain ramp, long enough to avoid clicks
+const SELCAL_AUTO_WINDOW        = 2.0;  // seconds of history the Auto button averages
+const SELCAL_SNR_HISTORY        = 8.0;  // seconds of per-channel history retained
+const SELCAL_SQUELCH_STORE      = 'selcalSquelch';
+
+// Per-channel squelch thresholds, persisted so they survive a page reload.
+let selcalSquelch = {};
+try {
+  selcalSquelch = JSON.parse(localStorage.getItem(SELCAL_SQUELCH_STORE)) || {};
+} catch (e) { selcalSquelch = {}; }
+
+function selcalSquelchFor(id) {
+  const v = selcalSquelch[id];
+  return typeof v === 'number' ? v : SELCAL_SQUELCH_OFF;
+}
+
+function selcalSetSquelch(id, db) {
+  selcalSquelch[id] = db;
+  try { localStorage.setItem(SELCAL_SQUELCH_STORE, JSON.stringify(selcalSquelch)); }
+  catch (e) { /* private browsing — the setting just will not persist */ }
+}
+
+// Rolling SNR history per channel: { id: [{t, snr}, …] }.  Fed at ~50 Hz from
+// the audio stream for whichever channel is being listened to, and every couple
+// of seconds from the status stream for all of them, so Auto works on any
+// channel — just at a coarser resolution for the ones that are not playing.
+const selcalSnrHistory = {};
+
+function selcalPushSNR(id, snr) {
+  if (typeof snr !== 'number' || !isFinite(snr)) return;
+  const now = performance.now() / 1000;
+  const hist = selcalSnrHistory[id] || (selcalSnrHistory[id] = []);
+  hist.push({ t: now, snr });
+  const cutoff = now - SELCAL_SNR_HISTORY;
+  while (hist.length && hist[0].t < cutoff) hist.shift();
+}
+
+// selcalAverageSNR returns the mean over the last `window` seconds, or null.
+function selcalAverageSNR(id, window) {
+  const hist = selcalSnrHistory[id];
+  if (!hist || !hist.length) return null;
+  const cutoff = performance.now() / 1000 - window;
+  const recent = hist.filter(s => s.t >= cutoff);
+  const use = recent.length ? recent : hist.slice(-1);
+  return use.reduce((a, s) => a + s.snr, 0) / use.length;
+}
 
 // Newest first — mirrors the order /selcal returns.
 let selcalSpots = [];
@@ -59,10 +114,20 @@ const SELCAL_MAX_LEAD    = 1.5;  // resync threshold
 
 let selcalWS = null;
 let selcalCtx = null;
-let selcalGain = null;
+let selcalGain = null;        // user volume
+let selcalSquelchGain = null; // squelch gate, scheduled in step with the audio
 let selcalRate = 12000;
 let selcalPlayhead = 0;
 let selcalListeningId = null;
+
+// Squelch gate state for the channel currently playing.
+let selcalGateOpen = true;
+let selcalGateHangUntil = 0; // audio-context time
+let selcalLastMeterPaint = 0;
+
+// The signal level arrives in a two-byte header on each audio frame; the
+// sentinel means the receiver supplied no measurement for that packet.
+const SELCAL_SNR_UNAVAILABLE = -32768;
 
 function selcalStopAudio() {
   if (selcalWS) {
@@ -74,6 +139,7 @@ function selcalStopAudio() {
     const ctx = selcalCtx;
     selcalCtx = null;
     selcalGain = null;
+    selcalSquelchGain = null;
     try { ctx.close(); } catch (e) { /* already closed */ }
   }
   selcalListeningId = null;
@@ -94,9 +160,16 @@ function selcalStartAudio(id) {
 
   selcalListeningId = id;
   selcalCtx = new AudioCtx();
+  // source → squelch gate → volume → output.  Keeping the gate on its own node
+  // means squelch scheduling and the volume slider cannot fight each other.
   selcalGain = selcalCtx.createGain();
   selcalGain.gain.value = selcalVolume();
   selcalGain.connect(selcalCtx.destination);
+  selcalSquelchGain = selcalCtx.createGain();
+  selcalSquelchGain.gain.value = 1;
+  selcalSquelchGain.connect(selcalGain);
+  selcalGateOpen = true;
+  selcalGateHangUntil = 0;
   // Browsers start the context suspended until a user gesture; this call is
   // made from the click handler, so resuming here is permitted.
   if (selcalCtx.state === 'suspended') selcalCtx.resume();
@@ -115,7 +188,7 @@ function selcalStartAudio(id) {
       } catch (e) { /* ignore malformed metadata */ }
       return;
     }
-    selcalPlayULaw(new Uint8Array(ev.data));
+    selcalPlayFrame(new DataView(ev.data));
   };
 
   ws.onerror = () => { /* onclose reports it */ };
@@ -130,25 +203,82 @@ function selcalStartAudio(id) {
   renderSelcalChannels();
 }
 
-function selcalPlayULaw(bytes) {
-  if (!selcalCtx || !bytes.length) return;
+// selcalPlayFrame decodes one relay frame — a two-byte signal-level header
+// followed by µ-law samples — schedules it for playback, and moves the squelch
+// gate in step with it.
+function selcalPlayFrame(view) {
+  if (!selcalCtx || view.byteLength <= 2) return;
 
-  const floats = new Float32Array(bytes.length);
-  for (let i = 0; i < bytes.length; i++) floats[i] = SELCAL_ULAW_TABLE[bytes[i]];
+  const raw = view.getInt16(0, true);
+  const snr = raw === SELCAL_SNR_UNAVAILABLE ? null : raw / 100;
 
-  const buf = selcalCtx.createBuffer(1, floats.length, selcalRate);
+  const n = view.byteLength - 2;
+  const floats = new Float32Array(n);
+  for (let i = 0; i < n; i++) floats[i] = SELCAL_ULAW_TABLE[view.getUint8(2 + i)];
+
+  const buf = selcalCtx.createBuffer(1, n, selcalRate);
   buf.copyToChannel(floats, 0);
 
   const src = selcalCtx.createBufferSource();
   src.buffer = buf;
-  src.connect(selcalGain);
+  src.connect(selcalSquelchGain);
 
   const now = selcalCtx.currentTime;
   if (selcalPlayhead < now + 0.02 || selcalPlayhead > now + SELCAL_MAX_LEAD) {
     selcalPlayhead = now + SELCAL_BUFFER_LEAD; // prime, or resync after a stall
   }
-  src.start(selcalPlayhead);
+  const startAt = selcalPlayhead;
+  src.start(startAt);
   selcalPlayhead += buf.duration;
+
+  selcalApplySquelch(snr, startAt, buf.duration);
+
+  // The listened channel gets a level on every packet, so its meter can track
+  // the signal at a proper refresh rate instead of waiting for the 2 s status
+  // stream.  Repaint is throttled; the history is kept at full resolution.
+  if (snr !== null && selcalListeningId) {
+    selcalPushSNR(selcalListeningId, snr);
+    const ch = selcalChannels.find(c => c.id === selcalListeningId);
+    if (ch) {
+      ch.snr_db = snr;
+      const wall = performance.now();
+      if (wall - selcalLastMeterPaint > 100) {
+        selcalLastMeterPaint = wall;
+        selcalPaintChannelRow(selcalListeningId);
+      }
+    }
+  }
+}
+
+// selcalApplySquelch decides whether the gate is open for this packet and
+// schedules the gain change at the instant the packet will actually be heard,
+// rather than when it arrived.
+//
+// Hysteresis plus a hang timer keep it from chattering when the signal sits near
+// the threshold — which matters because Auto deliberately parks the threshold at
+// the recent average, i.e. right in the middle of the noise.
+function selcalApplySquelch(snr, startAt, duration) {
+  const threshold = selcalSquelchFor(selcalListeningId);
+  let open;
+
+  if (threshold <= SELCAL_SQUELCH_OFF || snr === null) {
+    // Squelch off, or no measurement to judge by: never mute silently.
+    open = true;
+    selcalGateHangUntil = 0;
+  } else if (snr >= threshold) {
+    open = true;
+    selcalGateHangUntil = startAt + duration + SELCAL_SQUELCH_HANG;
+  } else if (snr < threshold - SELCAL_SQUELCH_HYSTERESIS) {
+    open = startAt < selcalGateHangUntil;
+  } else {
+    open = selcalGateOpen; // inside the hysteresis band — hold
+  }
+
+  if (open !== selcalGateOpen) {
+    selcalGateOpen = open;
+    selcalPaintChannelRow(selcalListeningId);
+  }
+  selcalSquelchGain.gain.setTargetAtTime(open ? 1 : 0, startAt, SELCAL_SQUELCH_RAMP);
 }
 
 function selcalVolume() {
@@ -229,7 +359,10 @@ function updateSelcalSignals(statuses) {
     ch.connected = st.connected;
     ch.level_db = st.level_db;
     ch.noise_db = st.noise_db;
-    ch.snr_db = st.snr_db;
+    // The channel being listened to already has a far higher-resolution level
+    // from the audio stream, so do not overwrite it with this coarser one.
+    if (st.id !== selcalListeningId) ch.snr_db = st.snr_db;
+    if (st.connected) selcalPushSNR(st.id, st.snr_db);
     ch.listeners = st.listeners;
     ch.packets = st.packets;
     ch.reconnections = st.reconnections;
@@ -253,51 +386,166 @@ function updateSelcalSignals(statuses) {
   }
 }
 
+// The channel table is rebuilt only when the set of channels changes.  Signal
+// levels arrive many times a second for the channel being listened to, and
+// replacing the table's markup that often would destroy a slider mid-drag and
+// throw away focus, so everything volatile is updated cell by cell instead.
+let selcalRowsKey = null;
+
+function selcalChannelRowsKey() {
+  return selcalChannels.map(c => c.id).join('|') + (selcalAudioAvailable ? '|a' : '');
+}
+
 function renderSelcalChannels() {
   const tbody = document.getElementById('selcal-channels-tbody');
   if (!tbody) return;
 
   if (!selcalChannels.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">No channels configured — set SELCAL_FREQS to enable.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No channels configured — set SELCAL_FREQS to enable.</td></tr>';
+    selcalRowsKey = null;
     return;
   }
 
-  const fmtDT = typeof fmtDateTime === 'function' ? fmtDateTime : () => '—';
+  const key = selcalChannelRowsKey();
+  if (key !== selcalRowsKey) {
+    selcalRowsKey = key;
+    buildSelcalChannelRows(tbody);
+  }
+  selcalChannels.forEach(ch => selcalPaintChannelRow(ch.id));
+}
 
+function buildSelcalChannelRows(tbody) {
   tbody.innerHTML = selcalChannels.map(ch => {
-    const listening = selcalListeningId === ch.id;
-    const btn = selcalAudioAvailable
-      ? `<button class="selcal-listen-btn${listening ? ' selcal-listen-btn--on' : ''}"
-                 data-ch="${esc(ch.id)}" title="${listening ? 'Stop listening' : 'Listen to this channel'}"
-                 ${ch.connected ? '' : 'disabled'}>${listening ? '⏹' : '▶'}</button>`
-      : '<span class="selcal-sig-none">—</span>';
-
-    const status = ch.connected
-      ? '<span class="selcal-state selcal-state--up">Connected</span>'
-      : '<span class="selcal-state selcal-state--down">Offline</span>';
-
-    const last = ch.last_code
-      ? `<span class="selcal-code">${esc(ch.last_code)}</span> <span class="selcal-muted">${fmtDT(ch.last_time)}</span>`
-      : '<span class="selcal-muted">—</span>';
-
+    const id = esc(ch.id);
     const label = ch.decode
       ? esc(ch.label || '')
       : `${esc(ch.label || '')} <span class="selcal-badge selcal-badge--audio">audio only</span>`;
 
-    return `<tr>
-      <td>${btn}</td>
+    const listen = selcalAudioAvailable
+      ? `<button class="selcal-listen-btn" data-ch="${id}"></button>`
+      : '<span class="selcal-sig-none">—</span>';
+
+    // The squelch threshold shares the meter scale, so the slider position can
+    // be read straight against the signal bar in the next column.
+    const squelch = selcalAudioAvailable
+      ? `<span class="selcal-sq">
+           <input type="range" class="selcal-sq-slider" data-ch="${id}"
+                  min="${SELCAL_SNR_MIN}" max="${SELCAL_SNR_MAX}" step="1"
+                  value="${selcalSquelchFor(ch.id)}"
+                  title="Mute this channel below this signal level" />
+           <span class="selcal-sq-val" data-role="sq-val"></span>
+           <button class="selcal-sq-auto" data-ch="${id}"
+                   title="Set the threshold to this channel's average level over the last ${SELCAL_AUTO_WINDOW} s">Auto</button>
+           <span class="selcal-sq-state" data-role="sq-state"></span>
+         </span>`
+      : '<span class="selcal-sig-none">—</span>';
+
+    return `<tr data-ch="${id}">
+      <td>${listen}</td>
       <td class="selcal-freq">${ch.freq_khz.toLocaleString()} kHz</td>
       <td>${label}</td>
-      <td>${status}</td>
-      <td>${selcalSignalBar(ch)}</td>
-      <td>${last}</td>
-      <td>${ch.decode ? (ch.count || 0).toLocaleString() : '—'}</td>
+      <td data-role="status"></td>
+      <td data-role="signal"></td>
+      <td>${squelch}</td>
+      <td data-role="last"></td>
+      <td data-role="count"></td>
     </tr>`;
   }).join('');
 
   tbody.querySelectorAll('.selcal-listen-btn').forEach(btn => {
     btn.addEventListener('click', () => selcalStartAudio(btn.dataset.ch));
   });
+  tbody.querySelectorAll('.selcal-sq-slider').forEach(el => {
+    el.addEventListener('input', () => {
+      selcalSetSquelch(el.dataset.ch, Number(el.value));
+      selcalPaintChannelRow(el.dataset.ch);
+    });
+  });
+  tbody.querySelectorAll('.selcal-sq-auto').forEach(btn => {
+    btn.addEventListener('click', () => selcalAutoSquelch(btn.dataset.ch));
+  });
+}
+
+// selcalAutoSquelch parks the threshold at the channel's average level over the
+// last couple of seconds — i.e. at the current noise floor, so anything above
+// ambient opens the gate.  Hysteresis and the hang timer stop it chattering
+// there.
+function selcalAutoSquelch(id) {
+  let avg = selcalAverageSNR(id, SELCAL_AUTO_WINDOW);
+  if (avg === null) {
+    const ch = selcalChannels.find(c => c.id === id);
+    avg = ch && typeof ch.snr_db === 'number' ? ch.snr_db : null;
+  }
+  if (avg === null) {
+    if (typeof showToast === 'function') showToast('No signal history yet for that channel', 6000);
+    return;
+  }
+  const v = Math.max(SELCAL_SNR_MIN, Math.min(SELCAL_SNR_MAX, Math.round(avg)));
+  selcalSetSquelch(id, v);
+
+  const slider = document.querySelector(`.selcal-sq-slider[data-ch="${CSS.escape(id)}"]`);
+  if (slider) slider.value = v;
+  selcalPaintChannelRow(id);
+}
+
+// selcalPaintChannelRow refreshes only the volatile cells of one row.
+function selcalPaintChannelRow(id) {
+  if (!id) return;
+  const tbody = document.getElementById('selcal-channels-tbody');
+  if (!tbody) return;
+  const tr = tbody.querySelector(`tr[data-ch="${CSS.escape(id)}"]`);
+  const ch = selcalChannels.find(c => c.id === id);
+  if (!tr || !ch) return;
+
+  const fmtDT = typeof fmtDateTime === 'function' ? fmtDateTime : () => '—';
+  const listening = selcalListeningId === ch.id;
+
+  const btn = tr.querySelector('.selcal-listen-btn');
+  if (btn) {
+    btn.textContent = listening ? '⏹' : '▶';
+    btn.classList.toggle('selcal-listen-btn--on', listening);
+    btn.disabled = !ch.connected;
+    btn.title = listening ? 'Stop listening' : 'Listen to this channel';
+  }
+
+  const set = (role, html) => {
+    const el = tr.querySelector(`[data-role="${role}"]`);
+    if (el) el.innerHTML = html;
+  };
+
+  set('status', ch.connected
+    ? '<span class="selcal-state selcal-state--up">Connected</span>'
+    : '<span class="selcal-state selcal-state--down">Offline</span>');
+  set('signal', selcalSignalBar(ch));
+  set('last', ch.last_code
+    ? `<span class="selcal-code">${esc(ch.last_code)}</span> <span class="selcal-muted">${fmtDT(ch.last_time)}</span>`
+    : '<span class="selcal-muted">—</span>');
+  set('count', ch.decode ? (ch.count || 0).toLocaleString() : '—');
+
+  const threshold = selcalSquelchFor(id);
+  const valEl = tr.querySelector('[data-role="sq-val"]');
+  if (valEl) {
+    valEl.textContent = threshold <= SELCAL_SQUELCH_OFF ? 'Off' : `${threshold} dB`;
+    valEl.classList.toggle('selcal-muted', threshold <= SELCAL_SQUELCH_OFF);
+  }
+
+  // The open/closed lamp only means anything for the channel being played;
+  // the others have no audio to gate.
+  const stateEl = tr.querySelector('[data-role="sq-state"]');
+  if (stateEl) {
+    if (!listening || threshold <= SELCAL_SQUELCH_OFF) {
+      stateEl.textContent = '';
+      stateEl.title = '';
+    } else if (selcalGateOpen) {
+      stateEl.textContent = '●';
+      stateEl.className = 'selcal-sq-state selcal-sq-state--open';
+      stateEl.title = 'Squelch open — audio passing';
+    } else {
+      stateEl.textContent = '○';
+      stateEl.className = 'selcal-sq-state selcal-sq-state--closed';
+      stateEl.title = 'Squelch closed — audio muted';
+    }
+  }
 }
 
 function renderSelcalSpots() {
