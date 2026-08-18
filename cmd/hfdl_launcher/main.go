@@ -203,6 +203,39 @@ func run(cfg config) error {
 		}
 	}
 
+	// ── MQTT publishing via UberSDR's addon ingest port ───────────────────
+	// Always on, no configuration: the endpoint is derived from the UberSDR
+	// URL. The feed is deliberately curated rather than complete — see mqtt.go
+	// for why the raw message stream is not published.
+	//
+	// Built after `instances` so the summary can report decoder health, and
+	// attached before anything starts so no event is missed.
+	receiverPos := newReceiverPosFunc(cfg.ubersdrURL)
+	mqttPub := NewMQTTPublisher(cfg.ubersdrURL, func() map[string]any {
+		s := store.mqttAggregates(receiverPos())
+
+		running, problem := 0, false
+		for _, inst := range instances {
+			inst.mu.Lock()
+			if inst.running {
+				running++
+			} else if !inst.stopping {
+				// Not running and not deliberately stopping: the launcher's
+				// retry loop should have brought it back.
+				problem = true
+			}
+			inst.mu.Unlock()
+		}
+		s["decoders_running"] = running
+		s["decoders_total"] = len(instances)
+		s["decoder_problem"] = problem
+		return s
+	})
+	store.SetMQTT(mqttPub)
+	selcalSt.mqtt = mqttPub
+	mqttPub.Start()
+	defer mqttPub.Stop()
+
 	// Web server — started after instances are built so the handler can read
 	// live health fields from each *instance at request time.
 	if cfg.webPort > 0 {

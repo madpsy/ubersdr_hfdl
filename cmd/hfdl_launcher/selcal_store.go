@@ -104,6 +104,10 @@ type selcalStore struct {
 
 	audioEnabled bool
 	broadcast    func(string)
+
+	// mqtt publishes each finalised spot (see mqtt.go). Set once at startup;
+	// nil disables publishing.
+	mqtt *MQTTPublisher
 }
 
 func newSelcalStore(audioEnabled bool, broadcast func(string)) *selcalStore {
@@ -189,7 +193,15 @@ func (s *selcalStore) flush(code string) {
 	}
 	s.total++
 	broadcast := s.broadcast
+	mq := s.mqtt
 	s.mu.Unlock()
+
+	// Published after the dedupe window closes, so one call is one event
+	// however many channels carried it — and the per-channel list makes each
+	// spot a simultaneous multi-frequency propagation measurement.
+	if mq != nil {
+		mq.PublishSelcal(spot)
+	}
 
 	if broadcast != nil {
 		if payload, err := json.Marshal(sseEvent{Type: "selcal", Data: spot}); err == nil {

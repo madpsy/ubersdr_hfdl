@@ -623,7 +623,14 @@ type statsStore struct {
 
 	subsMu sync.Mutex
 	subs   map[chan string]struct{}
+
+	// mqtt publishes curated activity to UberSDR (see mqtt.go). Set once at
+	// startup before any message is ingested; nil disables publishing.
+	mqtt *MQTTPublisher
 }
+
+// SetMQTT attaches the MQTT publisher. Call before ingest starts.
+func (s *statsStore) SetMQTT(p *MQTTPublisher) { s.mqtt = p }
 
 func newStatsStore(gsNames map[int]string, freqGSID map[int][]int, stations []groundStation) *statsStore {
 	if gsNames == nil {
@@ -707,6 +714,10 @@ func (s *statsStore) ingest(line string) {
 	}
 
 	freqKHz := h.Freq / 1000
+
+	// Set when this message creates a new aircraft entry; snapshotted before
+	// the unlock so MQTT can publish the first sighting outside the lock.
+	var newAircraftKey string
 
 	s.mu.Lock()
 
@@ -1027,6 +1038,9 @@ func (s *statsStore) ingest(line string) {
 				if existing == nil {
 					existing = &AircraftState{Key: acKey}
 					s.aircraft[acKey] = existing
+					// First sighting — remembered so MQTT can publish it once
+					// the identity fields below have been filled in.
+					newAircraftKey = acKey
 				}
 				existing.MsgCount++
 				existing.SigLevel = h.SigLevel
@@ -1275,6 +1289,17 @@ func (s *statsStore) ingest(line string) {
 		s.recent = s.recent[len(s.recent)-maxRecentMessages:]
 	}
 
+	// Copy the new aircraft while still under the lock — publishing reads it
+	// after the unlock, by which time another message could be mutating it.
+	var newAircraft *AircraftState
+	if newAircraftKey != "" {
+		if ac := s.aircraft[newAircraftKey]; ac != nil {
+			cp := *ac
+			cp.Track = nil // never published; hundreds of points per airframe
+			newAircraft = &cp
+		}
+	}
+
 	s.mu.Unlock()
 
 	// If we merged a callsign/reg-keyed entry into an ICAO-keyed one, tell the
@@ -1310,6 +1335,63 @@ func (s *statsStore) ingest(line string) {
 		if ev, err := json.Marshal(sseEvent{Type: "gs_event", Data: gsEvt}); err == nil {
 			s.broadcast(string(ev))
 		}
+	}
+
+	// ── MQTT (curated; see mqtt.go) ──────────────────────────────────────
+	// Enqueue-only, so none of this blocks the decode path. The raw message
+	// feed is deliberately NOT published: squitters alone would swamp the
+	// receiver's ingest budget while carrying nothing worth reading.
+	if mq := s.mqtt; mq != nil {
+		if rm.MsgText != "" {
+			mq.PublishACARS(rm)
+		}
+		if newAircraft != nil {
+			mq.PublishAircraftNew(*newAircraft)
+		}
+		if gsEvt != nil {
+			mq.PublishEvent("ground_station", map[string]any{
+				"time":        gsEvt.Time,
+				"gs_id":       gsEvt.GSID,
+				"location":    gsEvt.Location,
+				"change_note": gsEvt.ChangeNote,
+				"freq_khz":    gsEvt.FreqKHz,
+			})
+		}
+		if kind := logonEventKind(rm.MsgType); kind != "" {
+			fields := map[string]any{
+				"time":     rm.Time,
+				"freq_khz": rm.FreqKHz,
+				"msg_type": rm.MsgType,
+				"icao":     rm.SrcICAO,
+				"reg":      rm.Reg,
+				"flight":   rm.Flight,
+				"gs_id":    rm.DstID,
+			}
+			if rm.AssignedAcID != 0 {
+				fields["assigned_ac_id"] = rm.AssignedAcID
+			}
+			if rm.ReasonDescr != "" {
+				fields["reason"] = rm.ReasonDescr
+				fields["reason_code"] = rm.ReasonCode
+			}
+			mq.PublishEvent(kind, fields)
+		}
+	}
+}
+
+// logonEventKind classifies an LPDU type name as a logon/logoff event, or
+// returns "" for everything else. dumphfdl spells these out in prose
+// ("Logon request", "Logoff request", "Logon confirm"), so match on substrings
+// rather than an exact set that a dumphfdl update could silently invalidate.
+func logonEventKind(msgType string) string {
+	t := strings.ToLower(msgType)
+	switch {
+	case strings.Contains(t, "logoff"):
+		return "logoff"
+	case strings.Contains(t, "logon"):
+		return "logon"
+	default:
+		return ""
 	}
 }
 
@@ -1798,4 +1880,128 @@ func (s *statsStore) broadcast(msg string) {
 			// slow subscriber — drop rather than block
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// MQTT summary
+// ---------------------------------------------------------------------------
+
+// mqttAggregates returns the counters and rollups for the retained MQTT summary.
+//
+// Deliberately not snapshot(): that builds the full /stats payload including the
+// recent-message ring, aircraft history buckets and per-frequency signal series,
+// none of which belongs on a message bus every 30 seconds. This walks the same
+// state and emits only what the Home Assistant entities read, plus a compact
+// per-frequency rollup.
+//
+// rxLat/rxLon are the receiver's own coordinates, used for the furthest-aircraft
+// figure. Pass 0,0 when unknown and the distance fields are omitted.
+func (s *statsStore) mqttAggregates(rxLat, rxLon float64) map[string]any {
+	now := time.Now().Unix()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	uptime := int64(time.Since(s.startTime).Seconds())
+	out := map[string]any{
+		"messages_total": s.total,
+		"uptime_secs":    uptime,
+	}
+	if uptime > 0 {
+		out["messages_per_min"] = mqttRound(float64(s.total)/(float64(uptime)/60.0), 1)
+	} else {
+		out["messages_per_min"] = 0
+	}
+	if s.dumphfdlVer != "" {
+		out["dumphfdl_version"] = s.dumphfdlVer
+	}
+	if s.systableVersion > 0 {
+		out["systable_version"] = s.systableVersion
+	}
+
+	// Aircraft seen recently. The store already purges beyond
+	// aircraftMaxAgeSecs, but purging runs on its own timer, so filter by age
+	// here rather than trusting map size to be current.
+	cutoff := now - aircraftMaxAgeSecs
+	active := 0
+	var furthest *AircraftState
+	furthestKm := 0.0
+	haveRx := isValidPos(rxLat, rxLon)
+
+	for _, ac := range s.aircraft {
+		if ac.LastSeen < cutoff {
+			continue
+		}
+		active++
+		if !haveRx || !isValidPos(ac.Lat, ac.Lon) {
+			continue
+		}
+		if d := haversineKm(rxLat, rxLon, ac.Lat, ac.Lon); d > furthestKm {
+			furthestKm = d
+			furthest = ac
+		}
+	}
+	out["aircraft_active"] = active
+
+	if furthest != nil {
+		out["furthest_km"] = mqttRound(furthestKm, 1)
+		detail := map[string]any{
+			"icao":     furthest.ICAO,
+			"reg":      furthest.Reg,
+			"flight":   furthest.Flight,
+			"lat":      mqttRound(furthest.Lat, 4),
+			"lon":      mqttRound(furthest.Lon, 4),
+			"freq_khz": furthest.FreqKHz,
+			"gs_id":    furthest.GSID,
+		}
+		if furthest.AltValid {
+			detail["alt_ft"] = furthest.AltFt
+		}
+		out["furthest_detail"] = detail
+	}
+
+	// Ground stations heard in the same window.
+	gsHeard := 0
+	for _, last := range s.heardGS {
+		if last >= cutoff {
+			gsHeard++
+		}
+	}
+	out["ground_stations_heard"] = gsHeard
+
+	// Per-frequency rollup: message count and the most recent average signal
+	// level across the ground stations heard on it. Small — a handful of rows.
+	// Keyed by kHz from the struct, not by the map key — s.freqs is keyed by
+	// Hz, so using the map key here would label every row 10081000.
+	freqs := make(map[string]any, len(s.freqs))
+	activeFreqs := 0
+	for _, fs := range s.freqs {
+		var count int64
+		var sigSum float64
+		var sigN int
+		var lastSeen int64
+		for _, gs := range fs.GSStats {
+			count += gs.MsgCount
+			if gs.AvgSigLevel != 0 {
+				sigSum += gs.AvgSigLevel
+				sigN++
+			}
+			if gs.LastSeen > lastSeen {
+				lastSeen = gs.LastSeen
+			}
+		}
+		if count == 0 {
+			continue
+		}
+		activeFreqs++
+		row := map[string]any{"messages": count, "last_seen": lastSeen}
+		if sigN > 0 {
+			row["avg_sig_level"] = mqttRound(sigSum/float64(sigN), 1)
+		}
+		freqs[strconv.FormatInt(fs.FreqKHz, 10)] = row
+	}
+	out["frequencies_active"] = activeFreqs
+	out["frequencies"] = freqs
+
+	return out
 }

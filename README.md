@@ -807,6 +807,122 @@ the test suite is entirely offline.
 
 ---
 
+## MQTT / Home Assistant
+
+If the UberSDR receiver has MQTT enabled, the launcher publishes through it
+automatically.  **There is nothing to configure and nothing to add to
+`docker-compose.yml`** — the ingest endpoint is derived from `UBERSDR_URL`.
+
+When the receiver has MQTT turned off, or this container is not a recognised
+addon, publishing is silently skipped and decoding is unaffected.  Every publish
+is enqueued, never sent inline, so a slow receiver cannot stall the decode path.
+
+### Why the feed is curated
+
+HFDL squitters arrive on a fixed ~32 s cadence *per ground station per
+frequency*, so the raw message floor scales with (ground stations heard ×
+frequencies monitored).  On a well-sited receiver running several frequency
+groups that alone can approach the receiver's whole 120 msg/min ingest budget —
+while carrying nothing anyone would read.
+
+So the raw feed is **not** published.  Four event streams carry the interesting
+fraction, each with its own token bucket so a burst on one cannot starve the
+others:
+
+| Topic | Retained | Contents | Cap |
+|-------|----------|----------|-----|
+| `…/addons/hfdl/acars` | no | ACARS messages carrying operator text | 30/min |
+| `…/addons/hfdl/aircraft` | no | **First** sighting of an airframe, not every message from it | 10/min |
+| `…/addons/hfdl/selcal` | no | Selective calls, deduplicated across channels | 10/min |
+| `…/addons/hfdl/events` | no | Logon, logoff and ground-station change notes (`kind` field) | 10/min |
+| `…/addons/hfdl/summary` | yes | Counters, rollups and last-seen state, every 30 s | — |
+| `…/addons/hfdl/status` | yes | `online` / `offline`, maintained by UberSDR | — |
+
+Anything the caps discard is counted and reported as `dropped_events` (with a
+per-topic `dropped_detail`) in the summary, so a curated feed never silently
+looks complete.
+
+An ACARS event:
+
+```json
+{
+  "time": 1755500000,
+  "freq_khz": 10081,
+  "sig_level": -18.5,
+  "flight": "BAW117",
+  "reg": "G-STBA",
+  "icao": "4008F3",
+  "label": "H1",
+  "msg_type": "Unnumbered data",
+  "text": "POS N51.5 W000.1 FL380"
+}
+```
+
+A SELCAL spot lists every channel that carried it, which makes each call a
+simultaneous multi-frequency propagation measurement from a transmitter at a
+known location:
+
+```json
+{
+  "time": 1755500100,
+  "code": "AB-CD",
+  "selcal32": false,
+  "snr_db": 12.5,
+  "freqs_khz": [8864, 8906],
+  "channels": [
+    {"freq_khz": 8864, "label": "NAT-B", "snr_db": 12.5, "margin_db": 20.1},
+    {"freq_khz": 8906, "label": "NAT-A", "margin_db": 17.3}
+  ]
+}
+```
+
+ACARS text is sanitised to printable ASCII and capped at 1 KiB.  It comes off a
+noisy HF link, so a corrupt decode can carry arbitrary bytes — those are not
+valid UTF-8, and a JSON string must be, or the payload reaches the broker and
+then fails to parse in Home Assistant.
+
+### Home Assistant
+
+Eleven entities, all reading the single retained `summary` topic:
+
+| Entity | Type | Notes |
+|--------|------|-------|
+| Messages Received | sensor | Running total, `total_increasing` |
+| Message Rate | sensor | msg/min since start |
+| Aircraft Tracked | sensor | Seen in the last 30 minutes |
+| Ground Stations Heard | sensor | Same window |
+| Frequencies Active | sensor | Channels that have produced messages |
+| Last Aircraft | sensor | ICAO, reg, frequency and GS as attributes |
+| Last ACARS | sensor | Label, frequency and a 256-char text preview as attributes |
+| Last SELCAL | sensor | Code, with frequencies and SNR as attributes |
+| Furthest Aircraft | sensor | km from the receiver — the best-DX figure |
+| Decoders Running | sensor | Diagnostic |
+| Decoder Problem | binary sensor | On when an instance is down and not deliberately stopping |
+
+**Furthest Aircraft** needs the receiver's coordinates, which are fetched once
+from UberSDR's `/api/description` and cached.  A receiver with no GPS configured
+simply omits the figure rather than reporting a distance from 0°N 0°E.
+
+**There are deliberately no per-aircraft entities.**  Aircraft churn constantly
+while Home Assistant's entity registry is permanent, so per-airframe entities
+would accumulate thousands of dead rows within a week and blow the receiver's
+20-entity cap immediately.  Aircraft are published as *events*; build a map from
+those if you want one.
+
+### Overriding the endpoint
+
+Only needed if the operator has changed `mqtt.addon_ingest.port` from its
+default of 6926:
+
+```yaml
+environment:
+  UBERSDR_INGEST_URL: "http://ubersdr:7000"
+```
+
+See `addon_mqtt.md` in the ka9q_ubersdr repository for the full ingest API.
+
+---
+
 ## Protocol notes
 
 UberSDR delivers IQ data as binary PCM-zstd WebSocket messages.  `ubersdr_iq`
