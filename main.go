@@ -30,7 +30,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -45,7 +44,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/klauspost/compress/zstd"
+
+	"github.com/szpajder/dumphfdl/ubersdr_iq/internal/pcmv4"
 )
 
 const rcvBufSize = 16 * 1024 * 1024 // 16 MiB SO_RCVBUF for the IQ WebSocket connection
@@ -120,117 +120,52 @@ type wsMessage struct {
 // ---------------------------------------------------------------------------
 // PCM binary packet decoder
 // ---------------------------------------------------------------------------
-// The server sends packets in the ubersdr hybrid binary format (see
-// pcm_binary.go in the server source).  Two packet types:
-//
-//   Full header  (magic 0x5043 "PC", 29 bytes):
-//     [0:2]  uint16  magic
-//     [2]    uint8   version
-//     [3]    uint8   format (0=PCM, 2=PCM-zstd)
-//     [4:12] uint64  RTP timestamp (LE)
-//     [12:20]uint64  wall-clock ms (LE)
-//     [20:24]uint32  sample rate (LE)
-//     [24]   uint8   channels
-//     [25:29]uint32  reserved
-//     [29:]  []byte  PCM samples (big-endian int16)
-//
-//   Version 2 full header (37 bytes) adds signal quality fields:
-//     [25:29]float32 baseband power dBFS
-//     [29:33]float32 noise density dBFS
-//     [33:37]uint32  reserved
-//     [37:]  []byte  PCM samples (big-endian int16)
-//
-//   Minimal header (magic 0x504D "PM", 13 bytes):
-//     [0:2]  uint16  magic
-//     [2]    uint8   version
-//     [3:11] uint64  RTP timestamp (LE)
-//     [11:13]uint16  reserved
-//     [13:]  []byte  PCM samples (big-endian int16)
-
-const (
-	magicFull    = 0x5043 // "PC"
-	magicMinimal = 0x504D // "PM"
-)
+// Audio protocol version 4 only. The wire format lives in pcm_v4_header.go and
+// pcm_predictive.go beside this file; versions 1 to 3 -- a zstd frame wrapping a
+// fixed 29- or 37-byte header, samples big-endian and verbatim -- are gone, and
+// the server refuses a version it cannot serve rather than quietly serving an
+// older one.
 
 type pcmDecoder struct {
-	zd           *zstd.Decoder
-	lastRate     int
-	lastChannels int
+	v4 *pcmv4.PCMv4StreamDecoder
 }
 
+// newPCMDecoder returns a decoder for one connection.
+//
+// One per connection is the requirement, not a convenience: the predictor's taps
+// are derived from the samples already decoded, so carrying a decoder across a
+// reconnect would decode the new stream against the old one's filter state and
+// produce plausible noise rather than an error. runOnce() builds one per
+// session, which satisfies that.
 func newPCMDecoder() (*pcmDecoder, error) {
-	zd, err := zstd.NewReader(nil)
+	return &pcmDecoder{v4: pcmv4.NewPCMv4StreamDecoder()}, nil
+}
+
+// decode parses one version 4 packet.
+//
+// Returns little-endian int16 PCM bytes, sample rate, channel count -- the same
+// shape the versions 1-3 decoder returned, so the caller is unchanged. Unlike
+// that one there is no byte swap: versions 1-3 carried radiod's big-endian
+// samples verbatim, while version 4 carries int16 values that the codec renders
+// little-endian directly, which is what CS16 on stdout wants anyway.
+func (d *pcmDecoder) decode(data []byte, _ bool) ([]byte, int, int, error) {
+	// A server older than 0.1.63 clamps a version it cannot serve down to 1 and
+	// answers with a zstd frame rather than refusing. Naming that beats a bad
+	// magic reported once per packet.
+	if pcmv4.IsZstdFrame(data) {
+		return nil, 0, 0, fmt.Errorf(
+			"server does not support audio protocol version %d (needs UberSDR 0.1.63 or later)",
+			pcmv4.ProtocolVersion)
+	}
+
+	pcmLE, rate, ch, _, _, err := d.v4.DecodePacketLE(data)
 	if err != nil {
-		return nil, fmt.Errorf("zstd init: %w", err)
+		return nil, 0, 0, err
 	}
-	return &pcmDecoder{zd: zd}, nil
+	return pcmLE, rate, ch, nil
 }
 
-// decode decompresses (if needed) and parses a binary PCM packet.
-// Returns little-endian int16 PCM bytes, sample rate, channel count.
-func (d *pcmDecoder) decode(data []byte, isZstd bool) ([]byte, int, int, error) {
-	if isZstd {
-		var err error
-		data, err = d.zd.DecodeAll(data, nil)
-		if err != nil {
-			return nil, 0, 0, fmt.Errorf("zstd decompress: %w", err)
-		}
-	}
-
-	if len(data) < 4 {
-		return nil, 0, 0, fmt.Errorf("packet too short (%d bytes)", len(data))
-	}
-
-	magic := binary.LittleEndian.Uint16(data[0:2])
-
-	var rate, ch int
-	var raw []byte
-
-	switch magic {
-	case magicFull:
-		version := data[2]
-		var headerLen int
-		switch version {
-		case 2:
-			headerLen = 37
-		default: // version 1
-			headerLen = 29
-		}
-		if len(data) < headerLen {
-			return nil, 0, 0, fmt.Errorf("full-header packet too short (%d < %d)", len(data), headerLen)
-		}
-		rate = int(binary.LittleEndian.Uint32(data[20:24]))
-		ch = int(data[24])
-		raw = data[headerLen:]
-		d.lastRate = rate
-		d.lastChannels = ch
-
-	case magicMinimal:
-		if len(data) < 13 {
-			return nil, 0, 0, fmt.Errorf("minimal-header packet too short (%d bytes)", len(data))
-		}
-		raw = data[13:]
-		rate = d.lastRate
-		ch = d.lastChannels
-		if rate == 0 || ch == 0 {
-			return nil, 0, 0, fmt.Errorf("minimal header received before full header")
-		}
-
-	default:
-		return nil, 0, 0, fmt.Errorf("unknown magic 0x%04X", magic)
-	}
-
-	// Convert big-endian int16 → little-endian int16
-	n := len(raw) / 2
-	le := make([]byte, len(raw))
-	for i := 0; i < n; i++ {
-		s := binary.BigEndian.Uint16(raw[i*2:])
-		binary.LittleEndian.PutUint16(le[i*2:], s)
-	}
-	return le, rate, ch, nil
-}
-
-func (d *pcmDecoder) close() { d.zd.Close() }
+func (d *pcmDecoder) close() {}
 
 // ---------------------------------------------------------------------------
 // Client
@@ -276,7 +211,11 @@ func (c *client) wsURL() string {
 	q := url.Values{}
 	q.Set("frequency", fmt.Sprintf("%d", c.frequency))
 	q.Set("mode", c.iqMode)
+	// The format name is historical: it selects the lossless path, which from
+	// version 4 is the predictive codec rather than a zstd wrapper.
 	q.Set("format", "pcm-zstd")
+	// Named explicitly rather than left to the server's default of 1.
+	q.Set("version", fmt.Sprintf("%d", pcmv4.ProtocolVersion))
 	q.Set("user_session_id", c.sessionID)
 	if c.password != "" {
 		q.Set("password", c.password)

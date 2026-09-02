@@ -122,7 +122,7 @@ func TestSelcalAudioStreamsULaw(t *testing.T) {
 	samples := []int16{0, 1000, -1000, 32767, -32768}
 	mgr.channels[0].handlePacket(&pcmPacket{
 		Samples: samples, Rate: 12000, Channels: 1,
-		BasebandPowerDB: -100, NoiseDensityDB: -142.5, HasSignal: true, // 42.5 dB
+		BasebandPowerDB: -100, NoiseDB: -142.5, HasSignal: true, // 42.5 dB
 	}, new([]float64))
 
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {

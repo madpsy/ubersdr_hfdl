@@ -31,7 +31,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/klauspost/compress/zstd"
+
+	"github.com/szpajder/dumphfdl/ubersdr_iq/internal/pcmv4"
 )
 
 // USB passband requested from the receiver.  The SELCAL tones span
@@ -61,106 +62,87 @@ var (
 // ---------------------------------------------------------------------------
 // PCM binary packet decoder
 // ---------------------------------------------------------------------------
-// Mirrors the hybrid binary format produced by the UberSDR server (see
-// pcm_binary.go there, and the same decoder in ubersdr_iq's main.go).  Full
-// headers carry the stream metadata; minimal headers follow while it is
-// unchanged.  Samples are big-endian int16.
+// Audio protocol version 4, the only one this program reads. The wire format
+// and the codec live in internal/pcmv4, shared with the ubersdr_iq bridge --
+// versions 1 to 3 had the two carrying separate copies of the same header
+// parser, which is how they drifted onto different protocol versions.
 
 const (
-	selcalMagicFull    = 0x5043 // "PC"
-	selcalMagicMinimal = 0x504D // "PM"
-
-	// selcalSignalUnavailable is the sentinel the server sends when it has no
-	// signal-quality measurement for a packet.
+	// selcalSignalUnavailable is the threshold below which a signal-quality
+	// reading means "the receiver measured nothing". The sentinel itself is
+	// -999; comparing against -998 catches it without depending on the exact
+	// value surviving a float conversion.
 	selcalSignalUnavailable = -998.0
 )
 
 // pcmPacket is one decoded audio packet.
 //
-// For non-IQ modes the server forces a full version-2 header on every packet
-// (including the silence it substitutes when an audio gate is closed), so
-// BasebandPowerDB and NoiseDensityDB arrive continuously rather than only on
-// format changes.  That gives a receiver-measured signal level for every
-// channel at all times, with no dependence on anyone listening.
+// The server sends signal quality whenever it changes, and forces a
+// resynchronisation frame carrying it at least every five seconds, so
+// BasebandPowerDB and NoiseDB arrive continuously rather than only on format
+// changes. That gives a receiver-measured signal level for every channel at all
+// times, with no dependence on anyone listening.
 type pcmPacket struct {
 	Samples         []int16
 	Rate            int
 	Channels        int
 	BasebandPowerDB float64
-	NoiseDensityDB  float64
-	HasSignal       bool
+
+	// NoiseDB is the noise power in the demodulator passband, in dBFS, so
+	// BasebandPowerDB - NoiseDB is a true SNR.
+	//
+	// It was NoiseDensityDB under protocol version 2, which carried radiod's
+	// noise DENSITY in dBFS/Hz -- a different quantity, and one that made that
+	// subtraction not an SNR at all. Version 3 changed the field's meaning and
+	// version 4 inherits it; the name changed with it so the two cannot be
+	// confused.
+	NoiseDB   float64
+	HasSignal bool
 }
 
 type pcmDecoder struct {
-	zd           *zstd.Decoder
-	lastRate     int
-	lastChannels int
+	v4 *pcmv4.PCMv4StreamDecoder
 }
 
+// newPCMDecoder returns a decoder for one session.
+//
+// One per session is the requirement rather than a convenience: the predictor's
+// taps are derived from the samples already decoded, so a decoder carried across
+// a reconnect would decode the new stream against the old one's filter state and
+// return plausible noise rather than an error. The launcher holds one session
+// per voice channel, each with its own decoder.
 func newPCMDecoder() (*pcmDecoder, error) {
-	zd, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, fmt.Errorf("zstd init: %w", err)
-	}
-	return &pcmDecoder{zd: zd}, nil
+	return &pcmDecoder{v4: pcmv4.NewPCMv4StreamDecoder()}, nil
 }
 
-func (d *pcmDecoder) close() { d.zd.Close() }
+func (d *pcmDecoder) close() {}
 
-// decode decompresses and parses one packet, returning native-order samples
-// along with any signal-quality measurement the header carried.
+// decode parses one packet, returning native-order samples along with any
+// signal-quality measurement the header carried.
 func (d *pcmDecoder) decode(data []byte) (*pcmPacket, error) {
-	var err error
-	data, err = d.zd.DecodeAll(data, nil)
+	// A server older than 0.1.63 clamps a version it cannot serve down to 1 and
+	// answers with a zstd frame rather than refusing.
+	if pcmv4.IsZstdFrame(data) {
+		return nil, fmt.Errorf(
+			"server does not support audio protocol version %d (needs UberSDR 0.1.63 or later)",
+			pcmv4.ProtocolVersion)
+	}
+
+	h, samples, err := d.v4.DecodePacket(data)
 	if err != nil {
-		return nil, fmt.Errorf("zstd decompress: %w", err)
-	}
-	if len(data) < 4 {
-		return nil, fmt.Errorf("packet too short (%d bytes)", len(data))
+		return nil, err
 	}
 
-	pkt := &pcmPacket{}
-	var raw []byte
-
-	switch binary.LittleEndian.Uint16(data[0:2]) {
-	case selcalMagicFull:
-		version := data[2]
-		headerLen := 29
-		if version >= 2 {
-			headerLen = 37
-		}
-		if len(data) < headerLen {
-			return nil, fmt.Errorf("full-header packet too short (%d < %d)", len(data), headerLen)
-		}
-		pkt.Rate = int(binary.LittleEndian.Uint32(data[20:24]))
-		pkt.Channels = int(data[24])
-		if version >= 2 {
-			power := float64(math.Float32frombits(binary.LittleEndian.Uint32(data[25:29])))
-			noise := float64(math.Float32frombits(binary.LittleEndian.Uint32(data[29:33])))
-			if power > selcalSignalUnavailable && noise > selcalSignalUnavailable {
-				pkt.BasebandPowerDB, pkt.NoiseDensityDB, pkt.HasSignal = power, noise, true
-			}
-		}
-		raw = data[headerLen:]
-		d.lastRate, d.lastChannels = pkt.Rate, pkt.Channels
-
-	case selcalMagicMinimal:
-		if len(data) < 13 {
-			return nil, fmt.Errorf("minimal-header packet too short (%d bytes)", len(data))
-		}
-		raw = data[13:]
-		pkt.Rate, pkt.Channels = d.lastRate, d.lastChannels
-		if pkt.Rate == 0 || pkt.Channels == 0 {
-			return nil, fmt.Errorf("minimal header received before full header")
-		}
-
-	default:
-		return nil, fmt.Errorf("unknown magic 0x%04X", binary.LittleEndian.Uint16(data[0:2]))
+	pkt := &pcmPacket{
+		Samples:  samples,
+		Rate:     h.SampleRate,
+		Channels: h.Channels,
 	}
-
-	pkt.Samples = make([]int16, len(raw)/2)
-	for i := range pkt.Samples {
-		pkt.Samples[i] = int16(binary.BigEndian.Uint16(raw[i*2:]))
+	if float64(h.BasebandPower) > selcalSignalUnavailable &&
+		float64(h.Noise) > selcalSignalUnavailable {
+		pkt.BasebandPowerDB = float64(h.BasebandPower)
+		pkt.NoiseDB = float64(h.Noise)
+		pkt.HasSignal = true
 	}
 	return pkt, nil
 }
@@ -330,7 +312,7 @@ const (
 func encodeAudioFrame(pkt *pcmPacket) []byte {
 	snr := int64(audioSNRUnavailable)
 	if pkt.HasSignal {
-		v := math.Round((pkt.BasebandPowerDB - pkt.NoiseDensityDB) * audioSNRScale)
+		v := math.Round((pkt.BasebandPowerDB - pkt.NoiseDB) * audioSNRScale)
 		// Clamp rather than let an absurd reading wrap into a plausible one.
 		if v > math.MaxInt16 {
 			v = math.MaxInt16
@@ -669,9 +651,11 @@ func (c *selcalChannel) wsURL(sessionID string) string {
 	q.Set("frequency", fmt.Sprintf("%d", c.cfg.FreqHz()))
 	q.Set("mode", "usb")
 	q.Set("format", "pcm-zstd")
-	// Protocol version 2 adds the per-packet signal-quality fields; the server
-	// defaults to version 1, which omits them.
-	q.Set("version", "2")
+	// Version 4 carries the same per-packet signal quality version 2 added, with
+	// the noise field as passband noise power rather than density -- so
+	// power - noise is a true SNR -- and replaces the zstd wrapper with the
+	// predictive codec. The server defaults to version 1, which has neither.
+	q.Set("version", fmt.Sprintf("%d", pcmv4.ProtocolVersion))
 	q.Set("bandwidthLow", fmt.Sprintf("%d", selcalBandwidthLow))
 	q.Set("bandwidthHigh", fmt.Sprintf("%d", selcalBandwidthHigh))
 	q.Set("user_session_id", sessionID)
@@ -856,7 +840,7 @@ func (c *selcalChannel) handlePacket(pkt *pcmPacket, floats *[]float64) {
 	// being decoded or listened to.
 	if pkt.HasSignal {
 		c.levelDB = pkt.BasebandPowerDB
-		c.noiseDB = pkt.NoiseDensityDB
+		c.noiseDB = pkt.NoiseDB
 		c.hasSignal = true
 	}
 	c.mu.Unlock()
@@ -889,7 +873,7 @@ func (c *selcalChannel) handlePacket(pkt *pcmPacket, floats *[]float64) {
 	c.pushSNR(snrSample{
 		startSec: startSec,
 		endSec:   float64(c.samplesFed) / float64(pkt.Rate),
-		snrDB:    pkt.BasebandPowerDB - pkt.NoiseDensityDB,
+		snrDB:    pkt.BasebandPowerDB - pkt.NoiseDB,
 		valid:    pkt.HasSignal,
 	})
 

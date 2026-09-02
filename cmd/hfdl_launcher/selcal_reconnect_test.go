@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/klauspost/compress/zstd"
 )
 
 // fakeReceiver stands in for UberSDR: it accepts audio WebSocket sessions and
@@ -46,20 +45,32 @@ func newFakeReceiver(t *testing.T, behaviour func(conn *websocket.Conn, session 
 	return fr
 }
 
-// sendAudio writes one valid version-2 pcm-zstd packet.
+// sendAudio writes one valid protocol version 4 packet.
+//
+// A resynchronisation point every time, which is what a reconnect gets: the
+// decoder on the far side is new, its predictor holds no state, and a delta
+// packet would rightly be refused.
 func sendAudio(conn *websocket.Conn) error {
-	buf := make([]byte, 37+64)
-	binary.LittleEndian.PutUint16(buf[0:2], 0x5043)
-	buf[2] = 2
-	buf[3] = 2
-	binary.LittleEndian.PutUint32(buf[20:24], 12000)
-	buf[24] = 1
-	enc, err := zstd.NewWriter(nil)
-	if err != nil {
-		return err
-	}
-	defer enc.Close()
-	return conn.WriteMessage(websocket.BinaryMessage, enc.EncodeAll(buf, nil))
+	const (
+		flagEscape   = 1 << 7
+		flagMetadata = 1 << 5
+		flagCount    = 1 << 3
+		profileAudio = 1
+	)
+	const samples = 32
+
+	buf := make([]byte, 0, 24+samples*2)
+	buf = binary.LittleEndian.AppendUint32(buf, 0x344D4350) // "PCM4"
+	buf = append(buf, byte(flagEscape|flagMetadata|flagCount)|profileAudio)
+	buf = binary.LittleEndian.AppendUint64(buf, 1234)
+	var scratch [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(scratch[:], samples)
+	buf = append(buf, scratch[:n]...)
+	n = binary.PutUvarint(scratch[:], 12000)
+	buf = append(buf, scratch[:n]...)
+	buf = append(buf, 1) // channels
+	buf = append(buf, make([]byte, samples*2)...)
+	return conn.WriteMessage(websocket.BinaryMessage, buf)
 }
 
 // withShortTimeouts shrinks the reconnect timings so tests run quickly.

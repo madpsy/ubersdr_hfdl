@@ -8,8 +8,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/klauspost/compress/zstd"
 )
 
 // ---------------------------------------------------------------------------
@@ -359,42 +357,74 @@ func TestParseSelcalFreqs(t *testing.T) {
 // Receiver protocol
 // ---------------------------------------------------------------------------
 
-// buildPCMPacket assembles a packet in the server's binary format and
-// compresses it the way the pcm-zstd transport does.
-func buildPCMPacket(t *testing.T, version uint8, rate, channels int,
+// buildPCMPacket assembles a protocol version 4 packet carrying the given
+// samples verbatim.
+//
+// It uses the escape body -- the format's own path for samples a predictor
+// cannot help, such as full-entropy noise -- rather than implementing the
+// predictive encoder here. That keeps the fixture honest about the parts these
+// tests are about (the header, the metadata carry-forward and the signal
+// quality) while still driving the decoder's real escape path, which advances
+// the filters exactly as a coded packet would.
+//
+// The bit-exactness of the codec itself is covered where it belongs, in
+// internal/pcmv4 against a stream the server's own encoder produced.
+//
+// withQuality selects whether the header carries a signal-quality reading, the
+// way a server does only when it has one.
+func buildPCMPacket(t *testing.T, withQuality bool, rate, channels int,
 	power, noise float32, samples []int16) []byte {
 	t.Helper()
 
-	headerLen := 29
-	if version >= 2 {
-		headerLen = 37
-	}
-	buf := make([]byte, headerLen+len(samples)*2)
-	binary.LittleEndian.PutUint16(buf[0:2], 0x5043) // "PC"
-	buf[2] = version
-	buf[3] = 2 // pcm-zstd
-	binary.LittleEndian.PutUint64(buf[4:12], 1234)
-	binary.LittleEndian.PutUint64(buf[12:20], 5678)
-	binary.LittleEndian.PutUint32(buf[20:24], uint32(rate))
-	buf[24] = byte(channels)
-	if version >= 2 {
-		binary.LittleEndian.PutUint32(buf[25:29], math.Float32bits(power))
-		binary.LittleEndian.PutUint32(buf[29:33], math.Float32bits(noise))
-	}
-	// Samples are big-endian on the wire.
-	for i, s := range samples {
-		binary.BigEndian.PutUint16(buf[headerLen+i*2:], uint16(s))
+	const (
+		flagEscape   = 1 << 7
+		flagQuality  = 1 << 6
+		flagMetadata = 1 << 5
+		flagCount    = 1 << 3
+
+		// Profile lives in the low three bits and is declared by the packet, not
+		// inferred. 1 is the real cascade for mono audio; 0 is the complex IQ
+		// filter, which requires whole two-channel frames and rejects an odd
+		// sample count.
+		profileAudio = 1
+		profileIQ    = 0
+	)
+
+	profile := byte(profileAudio)
+	if channels == 2 {
+		profile = profileIQ
 	}
 
-	enc, err := zstd.NewWriter(nil)
-	if err != nil {
-		t.Fatalf("zstd writer: %v", err)
+	// Metadata makes this a resynchronisation point: absolute timestamp, and
+	// the rate and channel count stated rather than carried forward.
+	flags := byte(flagEscape|flagMetadata|flagCount) | profile
+	if withQuality {
+		flags |= flagQuality
 	}
-	defer enc.Close()
-	return enc.EncodeAll(buf, nil)
+
+	buf := make([]byte, 0, 32+len(samples)*2)
+	buf = binary.LittleEndian.AppendUint32(buf, 0x344D4350) // "PCM4"
+	buf = append(buf, flags)
+	buf = binary.LittleEndian.AppendUint64(buf, 1234) // absolute timestamp
+	var scratch [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(scratch[:], uint64(len(samples)))
+	buf = append(buf, scratch[:n]...)
+	n = binary.PutUvarint(scratch[:], uint64(rate))
+	buf = append(buf, scratch[:n]...)
+	buf = append(buf, byte(channels))
+	if withQuality {
+		// Centidecibels, as the wire carries them.
+		buf = binary.LittleEndian.AppendUint16(buf, uint16(int16(math.Round(float64(power)*100))))
+		buf = binary.LittleEndian.AppendUint16(buf, uint16(int16(math.Round(float64(noise)*100))))
+	}
+	// Escape bodies carry little-endian int16 samples.
+	for _, sm := range samples {
+		buf = binary.LittleEndian.AppendUint16(buf, uint16(sm))
+	}
+	return buf
 }
 
-func TestDecodeV2PacketCarriesSignalQuality(t *testing.T) {
+func TestDecodePacketCarriesSignalQuality(t *testing.T) {
 	d, err := newPCMDecoder()
 	if err != nil {
 		t.Fatalf("decoder: %v", err)
@@ -402,7 +432,7 @@ func TestDecodeV2PacketCarriesSignalQuality(t *testing.T) {
 	defer d.close()
 
 	want := []int16{0, 1, -1, 32767, -32768, 1234}
-	pkt, err := d.decode(buildPCMPacket(t, 2, 12000, 1, -42.5, -88.25, want))
+	pkt, err := d.decode(buildPCMPacket(t, true, 12000, 1, -42.5, -88.25, want))
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -410,47 +440,46 @@ func TestDecodeV2PacketCarriesSignalQuality(t *testing.T) {
 		t.Errorf("rate/channels = %d/%d, want 12000/1", pkt.Rate, pkt.Channels)
 	}
 	if !pkt.HasSignal {
-		t.Fatal("version 2 header should carry signal quality")
+		t.Fatal("a quality-bearing header should carry signal quality")
 	}
-	if pkt.BasebandPowerDB != -42.5 || pkt.NoiseDensityDB != -88.25 {
-		t.Errorf("signal = %g/%g dBFS, want -42.5/-88.25", pkt.BasebandPowerDB, pkt.NoiseDensityDB)
+	if pkt.BasebandPowerDB != -42.5 || pkt.NoiseDB != -88.25 {
+		t.Errorf("signal = %g/%g dBFS, want -42.5/-88.25", pkt.BasebandPowerDB, pkt.NoiseDB)
 	}
 	for i, s := range want {
 		if pkt.Samples[i] != s {
 			t.Fatalf("sample %d = %d, want %d", i, pkt.Samples[i], s)
 		}
 	}
-
-	// A minimal-header packet inherits the format from the preceding full one
-	// and carries no signal quality of its own.
-	min := make([]byte, 13+4)
-	binary.LittleEndian.PutUint16(min[0:2], 0x504D) // "PM"
-	min[2] = 1
-	binary.BigEndian.PutUint16(min[13:], uint16(int16(999)))
-	enc, _ := zstd.NewWriter(nil)
-	defer enc.Close()
-	pkt2, err := d.decode(enc.EncodeAll(min, nil))
-	if err != nil {
-		t.Fatalf("decode minimal: %v", err)
-	}
-	if pkt2.Rate != 12000 || pkt2.HasSignal {
-		t.Errorf("minimal packet: rate=%d hasSignal=%v, want 12000/false", pkt2.Rate, pkt2.HasSignal)
-	}
 }
 
-func TestDecodeV1PacketHasNoSignalQuality(t *testing.T) {
+// Version 4 carries signal quality FORWARD, the way it carries the rate and
+// channel count: a packet without the quality bit means "unchanged", not "no
+// reading". That differs from versions 1 and 2, where a minimal header simply
+// had no fields and the level went unknown between full headers -- which is why
+// the launcher can now show a level for every channel continuously.
+func TestDecodePacketCarriesQualityForward(t *testing.T) {
 	d, err := newPCMDecoder()
 	if err != nil {
 		t.Fatalf("decoder: %v", err)
 	}
 	defer d.close()
 
-	pkt, err := d.decode(buildPCMPacket(t, 1, 12000, 1, 0, 0, []int16{5, 6, 7}))
+	if _, err := d.decode(buildPCMPacket(t, true, 12000, 1, -42.5, -88.25, []int16{1, 2, 3})); err != nil {
+		t.Fatalf("priming decode: %v", err)
+	}
+	pkt, err := d.decode(buildPCMPacket(t, false, 12000, 1, 0, 0, []int16{4, 5, 6}))
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if pkt.HasSignal {
-		t.Error("version 1 header has no signal-quality fields")
+	if !pkt.HasSignal {
+		t.Error("quality should be carried forward from the last packet that stated it")
+	}
+	if pkt.BasebandPowerDB != -42.5 || pkt.NoiseDB != -88.25 {
+		t.Errorf("carried-forward signal = %g/%g dBFS, want -42.5/-88.25",
+			pkt.BasebandPowerDB, pkt.NoiseDB)
+	}
+	if pkt.Rate != 12000 || pkt.Channels != 1 {
+		t.Errorf("rate/channels = %d/%d, want 12000/1", pkt.Rate, pkt.Channels)
 	}
 	if len(pkt.Samples) != 3 {
 		t.Errorf("got %d samples, want 3", len(pkt.Samples))
@@ -464,13 +493,33 @@ func TestSignalUnavailableSentinel(t *testing.T) {
 	}
 	defer d.close()
 
-	// The server sends -999 when it has no measurement for the packet.
-	pkt, err := d.decode(buildPCMPacket(t, 2, 12000, 1, -999, -999, []int16{1}))
+	// -32768 centidecibels is the codepoint for "radiod reported nothing"; it
+	// reaches the caller as -999 and must not be shown as a level.
+	pkt, err := d.decode(buildPCMPacket(t, true, 12000, 1, -327.68, -327.68, []int16{1, 2}))
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if pkt.HasSignal {
-		t.Error("-999 dBFS is the 'unavailable' sentinel and must not be reported as a level")
+		t.Error("the 'unavailable' sentinel must not be reported as a level")
+	}
+}
+
+// A server too old for version 4 answers with a zstd frame rather than
+// refusing. Recognising it is what turns a dead channel into a message.
+func TestLegacyServerFrameIsNamed(t *testing.T) {
+	d, err := newPCMDecoder()
+	if err != nil {
+		t.Fatalf("decoder: %v", err)
+	}
+	defer d.close()
+
+	zstdFrame := []byte{0x28, 0xB5, 0x2F, 0xFD, 0x00}
+	_, err = d.decode(zstdFrame)
+	if err == nil {
+		t.Fatal("expected an error for a pre-version-4 server's frame")
+	}
+	if !strings.Contains(err.Error(), "0.1.63") {
+		t.Errorf("error should name the required server version, got: %v", err)
 	}
 }
 
@@ -488,7 +537,7 @@ func TestChannelWSURL(t *testing.T) {
 		"frequency":     "8906000", // carrier frequency, as aeronautical channels are quoted
 		"mode":          "usb",
 		"format":        "pcm-zstd",
-		"version":       "2", // required for the signal-quality fields
+		"version":       "4", // predictive codec, and the signal-quality fields
 		"bandwidthLow":  "50",
 		"bandwidthHigh": "2700", // passband contains every SELCAL tone (312.6–1557.8 Hz)
 	}
@@ -607,7 +656,7 @@ func TestSpotSignalComesFromReceiverDuringBurst(t *testing.T) {
 			Rate:            testRate,
 			Channels:        1,
 			BasebandPowerDB: -100 + snr, // power − noise = snr
-			NoiseDensityDB:  -100,
+			NoiseDB:         -100,
 			HasSignal:       true,
 		}, &floats)
 	}
