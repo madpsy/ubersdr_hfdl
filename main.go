@@ -24,6 +24,8 @@
 //	  -iq-mode string   IQ mode: iq, iq48, iq96, iq192, iq384    (default: iq)
 //	  -pass    string   Bypass password (optional)
 //	  -no-reconnect     Disable auto-reconnect on disconnect
+//	  -min-margin float Reduced-depth IQ, in dB of margin under the noise floor
+//	                    (15-60, default 26; 0 = lossless)
 
 package main
 
@@ -33,6 +35,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -178,7 +181,13 @@ type client struct {
 	password      string
 	sessionID     string
 	autoReconnect bool
-	running       bool
+
+	// minMargin is the reduced-depth IQ request in dB, or 0 for the lossless
+	// stream. On by default at minMarginDefaultDB; only -min-margin 0 turns it
+	// off. See parseMinMargin.
+	minMargin int
+
+	running bool
 }
 
 // httpBase returns the http(s) base URL derived from the user-supplied URL.
@@ -216,6 +225,13 @@ func (c *client) wsURL() string {
 	q.Set("format", "pcm-zstd")
 	// Named explicitly rather than left to the server's default of 1.
 	q.Set("version", fmt.Sprintf("%d", pcmv4.ProtocolVersion))
+	// Sent unless -min-margin 0 turned it off. An absent min_margin is not the
+	// same thing to the server as a zero one: absent is the lossless path,
+	// which is what asking for 0 has to produce, and a server too old to know
+	// the parameter ignores it and sends the lossless stream anyway.
+	if c.minMargin > 0 {
+		q.Set("min_margin", fmt.Sprintf("%d", c.minMargin))
+	}
 	q.Set("user_session_id", c.sessionID)
 	if c.password != "" {
 		q.Set("password", c.password)
@@ -411,18 +427,79 @@ func (c *client) run() int {
 }
 
 // ---------------------------------------------------------------------------
+// Reduced-depth IQ
+// ---------------------------------------------------------------------------
+
+// What -min-margin may be set to. These are the server's own limits, from
+// lossyMinMarginDB and lossyMaxMarginDB in pcm_lossy.go, repeated here so a
+// value outside them is refused with a reason at startup rather than silently
+// clamped to a different one for the life of the process.
+//
+// The floor is where the quantisation noise starts to lift the noise floor a
+// client can see: 15 dB down adds 0.14 dB to it, under what a receiver's own
+// readings resolve, where 6 dB down adds a full 1 dB. Above 60 dB the request
+// buys nothing measurable.
+const (
+	minMarginMinDB = 15.0
+	minMarginMaxDB = 60.0
+)
+
+// What -min-margin is when nobody says otherwise, and it is on: 26 dB, the same
+// MARGIN_DEFAULT_DB the UberSDR web client uses, the measured transparent
+// setting where every FT8 decode survives with its reported strength intact. It
+// costs about 0.01 dB of noise floor for roughly half the bytes on a stream that
+// never stops, and the margin sits far under what dumphfdl needs to demodulate
+// an HFDL burst. -min-margin 0 asks for the lossless stream instead.
+const minMarginDefaultDB = 26
+
+// parseMinMargin validates the -min-margin flag and returns the whole dB the
+// server will be asked for.
+//
+// Strict on purpose. The server clamps whatever it is sent into its own range
+// and rounds it to a whole dB, so a value outside the range would produce a
+// working but different stream and nothing downstream would ever say so -- a
+// launcher reading dumphfdl's output would see fewer frames and no reason for
+// it. Zero is the one value accepted outside the range: it is how a command line
+// turns the default off and asks for the lossless stream.
+func parseMinMargin(v float64) (int, error) {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, fmt.Errorf("%v is not a number of dB", v)
+	}
+	if v == 0 {
+		return 0, nil
+	}
+	if v < minMarginMinDB || v > minMarginMaxDB {
+		return 0, fmt.Errorf("%g dB is outside %g-%g; the server would not honour it as asked. "+
+			"Pass 0 for a lossless stream", v, minMarginMinDB, minMarginMaxDB)
+	}
+	dB := int(math.Round(v))
+	if float64(dB) != v {
+		fmt.Fprintf(os.Stderr, "-min-margin: %g dB rounded to %d, which is what the server would have done with it\n", v, dB)
+	}
+	return dB, nil
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
 func main() {
 	var (
-		rawURL   = flag.String("url", "", "UberSDR base URL, e.g. http://host:8080 (required)")
-		freq     = flag.Int("freq", 0, "Centre frequency in Hz (required)")
-		iqMode   = flag.String("iq-mode", "iq", "IQ mode: iq (10 kHz), iq48, iq96, iq192, iq384")
-		pass     = flag.String("pass", "", "Bypass password (optional)")
-		noReconn = flag.Bool("no-reconnect", false, "Disable auto-reconnect on disconnect")
+		rawURL    = flag.String("url", "", "UberSDR base URL, e.g. http://host:8080 (required)")
+		freq      = flag.Int("freq", 0, "Centre frequency in Hz (required)")
+		iqMode    = flag.String("iq-mode", "iq", "IQ mode: iq (10 kHz), iq48, iq96, iq192, iq384")
+		pass      = flag.String("pass", "", "Bypass password (optional)")
+		noReconn  = flag.Bool("no-reconnect", false, "Disable auto-reconnect on disconnect")
+		minMargin = flag.Float64("min-margin", minMarginDefaultDB,
+			"Reduced-depth IQ: dB of margin under the noise floor (15-60; 0 = lossless)")
 	)
 	flag.Parse()
+
+	marginDB, err := parseMinMargin(*minMargin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: -min-margin: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Validate iq-mode
 	modeInfo, modeOK := iqModes[*iqMode]
@@ -432,7 +509,7 @@ func main() {
 	}
 
 	if *rawURL == "" || *freq == 0 {
-		fmt.Fprintf(os.Stderr, "Usage: ubersdr_iq -url <http://host:port> -freq <Hz> [-iq-mode <mode>] [-pass <password>] [-no-reconnect]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: ubersdr_iq -url <http://host:port> -freq <Hz> [-iq-mode <mode>] [-pass <password>] [-no-reconnect] [-min-margin <dB>]\n\n")
 		fmt.Fprintf(os.Stderr, "IQ modes and their sample rates:\n")
 		fmt.Fprintf(os.Stderr, "  iq    — 10,000 Hz  (10 kHz bandwidth,  1 HFDL channel)\n")
 		fmt.Fprintf(os.Stderr, "  iq48  — 48,000 Hz  (48 kHz bandwidth,  ~5 channels)\n")
@@ -451,6 +528,18 @@ func main() {
 
 	fmt.Fprintf(os.Stderr, "mode=%s  sample-rate=%d Hz\n", *iqMode, modeInfo.sampleRate)
 
+	// Said either way, because the effect is invisible from dumphfdl's side:
+	// the same samples arrive at the same rate, and only the link to the
+	// receiver carries fewer bytes for them.
+	if marginDB == minMarginDefaultDB {
+		fmt.Fprintf(os.Stderr, "reduced-depth IQ: %d dB of margin under the noise floor "+
+			"(the default; -min-margin 0 for the lossless stream)\n", marginDB)
+	} else if marginDB > 0 {
+		fmt.Fprintf(os.Stderr, "reduced-depth IQ: %d dB of margin under the noise floor\n", marginDB)
+	} else {
+		fmt.Fprintf(os.Stderr, "reduced-depth IQ off: taking the lossless stream\n")
+	}
+
 	c := &client{
 		baseURL:       *rawURL,
 		frequency:     *freq,
@@ -458,6 +547,7 @@ func main() {
 		password:      *pass,
 		sessionID:     uuid.New().String(),
 		autoReconnect: !*noReconn,
+		minMargin:     marginDB,
 		running:       true,
 	}
 

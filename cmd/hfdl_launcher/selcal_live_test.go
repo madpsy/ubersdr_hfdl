@@ -9,7 +9,7 @@ package main
 //	go test ./cmd/hfdl_launcher/ -run TestLiveReceiver -v
 //
 // It verifies the parts that cannot be exercised offline: the WebSocket
-// handshake, the pcm-zstd/version-2 negotiation, continuous delivery of
+// handshake, the pcm-zstd/version-4 negotiation, continuous delivery of
 // signal-quality data, and that audio actually flows.
 
 import (
@@ -74,7 +74,7 @@ func TestLiveReceiver(t *testing.T) {
 		hasSignal := ch.hasSignal
 		ch.mu.Unlock()
 		if !hasSignal {
-			t.Errorf("%g kHz received no signal-quality data — check the version=2 request",
+			t.Errorf("%g kHz received no signal-quality data — check the version=4 request",
 				st.FreqKHz)
 		}
 		if st.NoiseDB == 0 || st.LevelDB == 0 {

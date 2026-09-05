@@ -436,6 +436,28 @@ IQ mode centred on the given frequency, and writes a continuous stream of raw
 | `-iq-mode` | `iq` | IQ mode (see table below) |
 | `-pass` | | Bypass password (if required by the server) |
 | `-no-reconnect` | | Disable auto-reconnect on disconnect |
+| `-min-margin` | `26` | Reduced-depth IQ: dB of margin under the noise floor (15-60; 0 = lossless) |
+
+### Reduced-depth IQ: `-min-margin`
+
+**On by default, at 26 dB.** It trades a defined amount of quantisation noise on
+the link between this client and the receiver for bandwidth, and the request is a
+*margin*, not a bit depth: the value is how far below the band's own noise floor
+the quantisation floor must stay, and the server works out per packet how many
+bits that needs. That is what makes one number mean the same thing on every
+band — a fixed depth leaves 50 dB of headroom on a dead 6 m band and 9 dB on
+medium wave.
+
+26 dB is the same setting the UberSDR web client defaults to: the measured
+transparent point, where every FT8 decode survives with its reported strength
+intact, for about 0.01 dB on the noise floor and roughly half the bytes. That
+matters here more than most places, because the launcher holds an IQ session open
+per frequency group for the life of the process — the saving is on every byte of
+a stream that never stops. `-min-margin 0` takes the lossless stream.
+
+Nothing dumphfdl sees changes: the same CS16 samples arrive at the same rate.
+Needs UberSDR 0.1.64 or later; an older server ignores `min_margin` and sends the
+lossless stream, so it still works, it just costs more bandwidth.
 
 ### IQ modes
 
@@ -633,7 +655,7 @@ the tab disappears from the dashboard entirely when it is empty.
 
 ```
 UberSDR server
-     │  WebSocket (usb, pcm-zstd, version 2) — one session per frequency
+     │  WebSocket (usb, pcm-zstd, version 4) — one session per frequency
      ▼
 hfdl_launcher ──┬──▶ SELCAL detector  ──▶ /selcal, /events   (always running)
                 └──▶ µ-law relay      ──▶ /selcal/audio      (on demand)
@@ -801,7 +823,7 @@ SELCAL_LIVE_SECONDS=60 \
   go test ./cmd/hfdl_launcher/ -run TestLiveReceiver -v
 ```
 
-This connects for real and checks the WebSocket handshake, the pcm-zstd/version-2
+This connects for real and checks the WebSocket handshake, the pcm-zstd/version-4
 negotiation, and that audio and signal-quality data are flowing.  The rest of
 the test suite is entirely offline.
 
