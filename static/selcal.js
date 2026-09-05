@@ -19,25 +19,34 @@
 
 const SELCAL_MAX_SPOTS = 500;
 
-// Signal meter scaling, in dB of baseband power over noise density as reported
-// by the receiver.  An idle HF voice channel sits around 30–35 dB, so the bar
-// starts empty there rather than at 0; a strong signal reaches 60.
-const SELCAL_SNR_MIN    = 30; // bar empty at or below
-const SELCAL_SNR_MAX    = 60; // bar full at or above
-const SELCAL_SNR_OK     = 40; // amber above this
-const SELCAL_SNR_STRONG = 50; // green above this
+// Signal meter scaling, in dB of SNR as reported by the receiver: baseband
+// power over the noise in the demodulator passband, which is a true SNR.
+//
+// It was 30–60 while the receiver sent a noise DENSITY in dBFS/Hz, where the
+// same subtraction landed an idle channel around 30–35. Protocol version 3
+// changed that field to passband noise and version 4 inherits it, so an idle
+// channel now sits near 0 and a strong signal reaches about 30 — see NoiseDB in
+// selcal_audio.go. The scale follows the measurement.
+const SELCAL_SNR_MIN    = 0;  // bar empty at or below
+const SELCAL_SNR_MAX    = 40; // bar full at or above
+const SELCAL_SNR_OK     = 10; // amber above this
+const SELCAL_SNR_STRONG = 20; // green above this
 
 // Squelch. The threshold is per channel and shares the meter scale, so a slider
 // position can be read directly against the channel's signal bar. The bottom of
-// the range is "off" rather than a 30 dB gate, since an idle channel already
-// sits at 30–35 dB and a gate there would never close anyway.
+// the range is "off" rather than a 0 dB gate, since an idle channel already sits
+// near 0 dB and a gate there would never close anyway.
 const SELCAL_SQUELCH_OFF   = SELCAL_SNR_MIN;
 const SELCAL_SQUELCH_DWELL = 0.5;   // seconds continuously below the threshold before muting
 const SELCAL_SQUELCH_RAMP  = 0.015; // gain ramp, long enough to avoid clicks
 const SELCAL_AUTO_WINDOW   = 3.0;   // seconds of history the Auto button averages
 const SELCAL_AUTO_MARGIN   = 3;     // dB Auto sets above that average
 const SELCAL_SNR_HISTORY   = 10.0;  // seconds of per-channel history retained
-const SELCAL_SQUELCH_STORE = 'selcalSquelch';
+// Versioned with the scale above. A threshold saved against the old 30–60 range
+// would be read as a gate near the top of the new one and mute the channel for
+// good, with nothing on screen to say why; a new key simply starts those
+// channels at "off".
+const SELCAL_SQUELCH_STORE = 'selcalSquelch.v2';
 
 // Per-channel squelch thresholds, persisted so they survive a page reload.
 let selcalSquelch = {};
@@ -334,8 +343,8 @@ function selcalSnrClass(snr) {
 
 function selcalSignalBar(ch) {
   if (!ch.connected) return '<span class="selcal-sig-none">—</span>';
-  // snr_db is baseband power minus noise density, as measured by the receiver
-  // and delivered on every audio packet.
+  // snr_db is baseband power minus the passband noise, as measured by the
+  // receiver and delivered on every audio packet.
   const snr = ch.snr_db || 0;
   const span = SELCAL_SNR_MAX - SELCAL_SNR_MIN;
   const pct = Math.max(0, Math.min(100, ((snr - SELCAL_SNR_MIN) / span) * 100));
@@ -345,7 +354,7 @@ function selcalSignalBar(ch) {
   const title = `Signal ${(ch.level_db || 0).toFixed(1)} dBFS, noise ${(ch.noise_db || 0).toFixed(1)} dBFS`;
   return `<span class="selcal-sig" title="${esc(title)}">
     <span class="selcal-sig-bar"><span class="selcal-sig-fill selcal-sig-fill--${cls}" style="width:${pct.toFixed(0)}%"></span></span>
-    <span class="selcal-sig-val">${snr.toFixed(0)} dB</span>
+    <span class="selcal-sig-val">${Math.round(snr)} dB</span>
   </span>`;
 }
 

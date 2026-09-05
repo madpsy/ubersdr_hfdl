@@ -3472,10 +3472,17 @@ td.empty {
 .selcal-sig-fill--ok     { background: var(--yellow); }
 .selcal-sig-fill--strong { background: var(--green); }
 
+/* Fixed width, right aligned and tabular: the reading changes several times a
+   second, and "0 dB" against "-1 dB" or "40 dB" would otherwise resize the cell
+   and shuffle every column to its right on each update. Wide enough for the
+   widest reading the meter can show, "-99 dB". */
 .selcal-sig-val {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+  text-align: right;
 }
 
 .selcal-sig-none {
@@ -3528,11 +3535,16 @@ td.empty {
   accent-color: var(--accent);
 }
 
+/* Same reasoning as .selcal-sig-val: the threshold reads "Off" or "40 dB" and
+   sits between the slider and the Auto button, which must not move as it is
+   dragged. */
 .selcal-sq-val {
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   min-width: 38px;
+  text-align: right;
 }
 
 .selcal-sq-auto {
